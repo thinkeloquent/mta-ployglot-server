@@ -1,0 +1,70 @@
+# server/fastapi — CI Makefile (installed as Makefile.ci alongside the dev Makefile)
+#
+# Idempotent. `make -f Makefile.ci ci` is the single command CI runs.
+
+SHELL          := /bin/bash
+.SHELLFLAGS    := -eu -o pipefail -c
+.DEFAULT_GOAL  := help
+
+PKG_DIR        := $(abspath $(CURDIR))
+POETRY         ?= poetry
+PYTHON         ?= python3.11
+
+# ---------------------------------------------------------------------------
+# meta
+# ---------------------------------------------------------------------------
+
+.PHONY: help
+help: ## Show available targets
+	@awk 'BEGIN{FS=":.*##"; printf "\nTargets:\n"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+.PHONY: print-env
+print-env: ## Print tool versions (debug)
+	@echo "pkg-dir : $(PKG_DIR)"
+	@$(PYTHON) --version
+	@$(POETRY) --version
+
+.PHONY: check-poetry
+check-poetry: ## Verify poetry is installed
+	@command -v $(POETRY) >/dev/null 2>&1 || { \
+		echo "✖ poetry not found. Install: https://python-poetry.org/docs/#installation"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# lifecycle (CI contract)
+# ---------------------------------------------------------------------------
+
+.PHONY: install
+install: check-poetry ## Install deps (mutable lockfile OK)
+	$(POETRY) install
+
+.PHONY: ci-install
+ci-install: check-poetry ## Deterministic install for CI (frozen lockfile)
+	@if [ -f poetry.lock ]; then $(POETRY) install --no-interaction --sync; else $(POETRY) install --no-interaction; fi
+
+.PHONY: lint
+lint: check-poetry ## Static checks (ruff if available, otherwise import-only smoke)
+	@$(POETRY) run ruff check . 2>/dev/null || $(POETRY) run python -c \
+		"import importlib; [importlib.import_module(m) for m in ['config.lifecycles._shared_fetch','config.lifecycles._fetch_factories','config.lifecycles._fetch_registry','config.routes._di']]; print('imports OK')"
+
+.PHONY: test
+test: check-poetry ## Run the package test suite (pytest)
+	$(POETRY) run pytest -q
+
+.PHONY: build
+build: ## Server runtime — no build step
+	@echo "fastapi server is runtime-only; nothing to build"
+
+.PHONY: clean
+clean: ## Remove generated artifacts
+	@rm -rf .quickstart.log .quickstart.pid .pytest_cache
+
+.PHONY: distclean
+distclean: clean ## Also remove .venv and poetry.lock
+	@rm -rf .venv poetry.lock
+
+# ---------------------------------------------------------------------------
+# CI aggregate
+# ---------------------------------------------------------------------------
+
+.PHONY: ci
+ci: ci-install lint test build ## Full CI pipeline (install → lint → test → build)

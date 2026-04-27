@@ -1,0 +1,25 @@
+{
+  "name": "mta-fastify-server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Standalone fastify server that extends @thinkeloquent/fastify-server from the mta-ployglot-server-bootstrap submodule.",
+  "type": "module",
+  "scripts": {
+    "start": "node main.mjs",
+    "dev": "node --watch main.mjs",
+    "test": "vitest run --config vitest.config.mjs",
+    "clean": "rm -rf node_modules package-lock.json"
+  },
+  "dependencies": {
+    "fastify-server": "file:../../ployglots/mta-ployglot-server-bootstrap/fastify_server",
+    "@mta/print-routes-fastify": "file:../../../mta-ployglot-server-print-routes/packages/mjs",
+    "fastify-plugin": "^5.0.0",
+    "@polyglot/fetch-http-client": "file:../../ployglots/mta-ployglot-pkg-fetch-client/packages/ts"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

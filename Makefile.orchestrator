@@ -1,0 +1,144 @@
+# Makefile.orchestrator — multi-repo orchestration: per-sibling operations
+# spanning every repo registered in workspace.toml.
+#
+# All targets read .dev/workspace.toml.lock.json (emitted by bootstrap.sh).
+# Run `bootstrap.sh emit` after changing workspace.toml to refresh the lock.
+#
+# Conventions:
+#   - <op>      = human-readable, column-aligned output
+#   - <op>-json = one JSON object per sibling on stdout (JSON-lines)
+#   - APPLY=1, CONFIRM=1 — required for any operation that touches working tree or remote
+#   - KEEP_GOING=1       — continue past per-sibling failures; exit code = failure count
+
+# ------------------------------------------------------------------------------
+# Shared variables
+# ------------------------------------------------------------------------------
+
+ORCH_DIR     := $(ROOT_DIR)/scripts/workspace/orchestrator
+ORCH_HELPER  := $(ORCH_DIR)/_for-each-sibling.sh
+ORCH_STATUS  := $(ORCH_DIR)/sibling-status.sh
+
+APPLY        ?=
+REF          ?=
+NAME         ?=
+SCOPE        ?= touched
+SIBLINGS     ?=
+FORCE        ?=
+MSG          ?=
+CONFIRM      ?=
+KEEP_GOING   ?=
+
+# When SIBLINGS="name1 name2" is set, expand to `--siblings "name1 name2"`;
+# otherwise empty. The helper intersects the list with the language filter and
+# refuses on unknown names so a typo can't silently widen scope to "all
+# language-matching siblings".
+ORCH_SIBLINGS_FLAG = $(if $(SIBLINGS),--siblings "$(SIBLINGS)")
+
+# ------------------------------------------------------------------------------
+# status-all — per-sibling git state across all hydrated siblings
+# ------------------------------------------------------------------------------
+
+.PHONY: status-all
+status-all: ## (sibling) per-repo branch / ahead-behind / dirty (exit 0 only if all clean+default)
+	@# Single helper invocation: capture JSON-lines once, derive both the human
+	@# column-aligned view and the all-clean validation from the same stream.
+	@# This avoids paying the per-sibling `git fetch` cost twice.
+	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
+	  $(ORCH_HELPER) --cmd '$(ORCH_STATUS) --json' --mode parallel --keep-going --json $(ORCH_SIBLINGS_FLAG) > "$$tmp"; \
+	  jq -r 'select(.name) | [.name, .branch, "+\(.ahead)/-\(.behind)", (if .dirty then "DIRTY" else "clean" end), .last_commit_age] | join(" | ")' "$$tmp" \
+	    | column -t -s '|'; \
+	  jq -se '[.[] | select(.sibling)] | all(.[]; .status == "ok" or .status == "skipped")' "$$tmp" >/dev/null
+
+.PHONY: status-all-json
+status-all-json: ## (sibling) status-all output as JSON-lines on stdout
+	@$(ORCH_HELPER) --cmd '$(ORCH_STATUS) --json' --keep-going --json $(ORCH_SIBLINGS_FLAG)
+
+# ------------------------------------------------------------------------------
+# sync-all — pull default_ref on every clean, on-default sibling
+# ------------------------------------------------------------------------------
+
+ORCH_SYNC := $(ORCH_DIR)/sibling-sync.sh
+
+.PHONY: sync-all
+sync-all: ## (sibling) pull default_ref on every sibling (dry-run; APPLY=1 to perform; REF=branch overrides)
+	@$(ORCH_HELPER) --cmd '$(ORCH_SYNC) $(if $(APPLY),--apply) $(if $(REF),--ref $(REF))' --keep-going $(ORCH_SIBLINGS_FLAG) \
+	  | column -t -s '|'
+
+.PHONY: sync-all-json
+sync-all-json: ## (sibling) sync-all output as JSON-lines on stdout
+	@$(ORCH_HELPER) --cmd '$(ORCH_SYNC) $(if $(APPLY),--apply) $(if $(REF),--ref $(REF)) --json' --keep-going --json $(ORCH_SIBLINGS_FLAG)
+
+# ------------------------------------------------------------------------------
+# branch-all — create the same branch on every (touched) sibling
+# ------------------------------------------------------------------------------
+
+ORCH_BRANCH := $(ORCH_DIR)/sibling-branch.sh
+
+.PHONY: branch-all
+branch-all: ## (sibling) create NAME=<branch> on every sibling (SCOPE=touched|all, SIBLINGS="name1 name2", FORCE=1)
+	@if [ -z "$(NAME)" ]; then \
+	  echo 'ERROR: NAME=<branch> required (e.g. make branch-all NAME=feature/x)' >&2; \
+	  exit 64; \
+	fi
+	@# Pre-flight: detect any sibling that already has the branch (refuse the whole set)
+	@if [ -z "$(FORCE)" ]; then \
+	  conflicts=$$( $(ORCH_HELPER) --cmd '$(ORCH_BRANCH) --name $(NAME) --scope $(SCOPE) --json' --keep-going --json $(ORCH_SIBLINGS_FLAG) 2>/dev/null \
+	    | jq -r 'select(.action=="EXISTS") | .name' ); \
+	  if [ -n "$$conflicts" ]; then \
+	    echo "ERROR: branch '$(NAME)' already exists on:" >&2; \
+	    echo "$$conflicts" | sed 's/^/  /' >&2; \
+	    echo "Use FORCE=1 to override (will not overwrite, just continues past)." >&2; \
+	    exit 1; \
+	  fi; \
+	fi
+	@$(ORCH_HELPER) --cmd '$(ORCH_BRANCH) --name $(NAME) --scope $(SCOPE) $(if $(FORCE),--force)' --keep-going $(ORCH_SIBLINGS_FLAG) \
+	  | column -t -s '|'
+
+.PHONY: branch-all-json
+branch-all-json: ## (sibling) branch-all output as JSON-lines on stdout
+	@if [ -z "$(NAME)" ]; then echo 'ERROR: NAME=<branch> required' >&2; exit 64; fi
+	@$(ORCH_HELPER) --cmd '$(ORCH_BRANCH) --name $(NAME) --scope $(SCOPE) $(if $(FORCE),--force) --json' --keep-going --json $(ORCH_SIBLINGS_FLAG)
+
+# ------------------------------------------------------------------------------
+# commit-all / push-all — coordinated commit + push across siblings on the same branch
+# ------------------------------------------------------------------------------
+
+ORCH_COMMIT := $(ORCH_DIR)/sibling-commit.sh
+ORCH_PUSH   := $(ORCH_DIR)/sibling-push.sh
+
+# Shell-quote helper so MSG containing spaces and special chars passes safely
+# through the for-each-sibling layer. Wraps in single quotes; escapes embedded
+# single quotes by closing-escaping-reopening.
+shellescape = '$(subst ','\'',$(1))'
+
+.PHONY: commit-all
+commit-all: ## (sibling) commit staged changes on siblings whose branch matches root's branch (MSG="<msg>", SIBLINGS="name1 name2")
+	@if [ -z "$(MSG)" ]; then echo 'ERROR: MSG="<message>" required' >&2; exit 64; fi
+	@root_branch=$$(git symbolic-ref --short HEAD); \
+	  case "$$root_branch" in \
+	    main|master|release/*) \
+	      echo "ERROR: refusing to commit-all on protected branch '$$root_branch'" >&2; \
+	      exit 1 ;; \
+	  esac; \
+	  $(ORCH_HELPER) --cmd '$(ORCH_COMMIT) --msg $(call shellescape,$(MSG)) --match-branch '"$$root_branch"'' --keep-going $(ORCH_SIBLINGS_FLAG) \
+	    | column -t -s '|'
+
+.PHONY: commit-all-json
+commit-all-json: ## (sibling) commit-all output as JSON-lines on stdout
+	@if [ -z "$(MSG)" ]; then echo 'ERROR: MSG="<message>" required' >&2; exit 64; fi
+	@root_branch=$$(git symbolic-ref --short HEAD); \
+	  case "$$root_branch" in \
+	    main|master|release/*) echo 'ERROR: protected branch' >&2; exit 1 ;; \
+	  esac; \
+	  $(ORCH_HELPER) --cmd '$(ORCH_COMMIT) --msg $(call shellescape,$(MSG)) --match-branch '"$$root_branch"' --json' --keep-going --json $(ORCH_SIBLINGS_FLAG)
+
+.PHONY: push-all
+push-all: ## (sibling) push siblings whose branch matches root's (dry-run; CONFIRM=1 to push, SIBLINGS="name1 name2")
+	@root_branch=$$(git symbolic-ref --short HEAD); \
+	  $(ORCH_HELPER) --cmd '$(ORCH_PUSH) $(if $(CONFIRM),--apply) --match-branch '"$$root_branch"'' --keep-going $(ORCH_SIBLINGS_FLAG) \
+	    | column -t -s '|'
+
+.PHONY: push-all-json
+push-all-json: ## (sibling) push-all output as JSON-lines on stdout
+	@root_branch=$$(git symbolic-ref --short HEAD); \
+	  $(ORCH_HELPER) --cmd '$(ORCH_PUSH) $(if $(CONFIRM),--apply) --match-branch '"$$root_branch"' --json' --keep-going --json $(ORCH_SIBLINGS_FLAG)

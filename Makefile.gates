@@ -1,0 +1,321 @@
+# Makefile.gates — Checklist.md gates as runnable make targets.
+#
+# Each gate has:
+#   - <gate>      — human-readable, exits non-zero on failure
+#   - <gate>-json — one JSON object per finding on stdout (JSON-lines)
+#
+# Aggregator:
+#   make pre-push           — run every gate in order, stop-on-fail (KEEP_GOING=1)
+#   make pre-push-json      — same as JSON-lines with timing
+#   make checklist          — interactive walker (CI=1 falls back to pre-push)
+#
+# DEVIATION FROM PLAN: the plan named the env-key gate "vault-check" assuming a
+# vault.get('KEY') accessor. The real codebase reads from process.env / os.environ
+# directly. The make target name is preserved for plan/Checklist consistency, but
+# internally it's an env-key reachability probe.
+
+# ------------------------------------------------------------------------------
+# Shared variables
+# ------------------------------------------------------------------------------
+
+ORCH_DIR_GATES   := scripts/workspace/orchestrator
+GATE_VAULT_EXTRACT := $(ORCH_DIR_GATES)/extract-vault-keys.sh
+GATE_VAULT_PROBE_MJS := $(ORCH_DIR_GATES)/probes/vault-probe.mjs
+GATE_VAULT_PROBE_PY  := $(ORCH_DIR_GATES)/probes/vault-probe.py
+
+# ------------------------------------------------------------------------------
+# vault-check — verify every env key referenced by either twin is set
+# ------------------------------------------------------------------------------
+
+.PHONY: vault-check
+vault-check: ## (gate) every process.env / os.environ key referenced by either twin is set (Checklist 2; CI=1 strict, VAULT_CHECK=warn = soft for dev)
+	@keys=$$( $(GATE_VAULT_EXTRACT) --twin both --json | jq -r '.key' | sort -u ); \
+	  if [ -z "$$keys" ]; then echo "vault-check: no env keys found in source"; exit 0; fi; \
+	  combined=$$( { node $(GATE_VAULT_PROBE_MJS) $$keys; python3 $(GATE_VAULT_PROBE_PY) $$keys; } | jq -s 'group_by(.key) | map({key: .[0].key, ok: (all(.[]; .ok))}) | .[]' ); \
+	  echo "$$combined" | jq -r 'if .ok then "OK   \(.key)" else "FAIL \(.key)" end'; \
+	  fail=$$(echo "$$combined" | jq -r 'select(.ok==false) | .key' | wc -l | tr -d ' '); \
+	  if [ "$$fail" -eq 0 ]; then exit 0; fi; \
+	  if [ "$(VAULT_CHECK)" = "warn" ] && [ -z "$(CI)" ]; then \
+	    echo ""; \
+	    echo "vault-check: WARN — $$fail key(s) unset (VAULT_CHECK=warn, dev shell only)."; \
+	    echo "  → CI runs (CI=1) ignore VAULT_CHECK=warn and hard-fail."; \
+	    exit 0; \
+	  fi; \
+	  echo ""; \
+	  echo "vault-check: FAILED — $$fail key(s) unset."; \
+	  echo "  → To validate locally, source a .env with the missing keys before make."; \
+	  echo "  → To opt out in a dev shell only: VAULT_CHECK=warn make vault-check"; \
+	  echo "  → See docs/vault-check-expectations.md for the supported provisioning paths."; \
+	  exit 1
+
+.PHONY: vault-check-json
+vault-check-json: ## (gate) vault-check output as JSON-lines on stdout
+	@keys=$$( $(GATE_VAULT_EXTRACT) --twin both --json | jq -r '.key' | sort -u ); \
+	  if [ -z "$$keys" ]; then exit 0; fi; \
+	  { node $(GATE_VAULT_PROBE_MJS) $$keys; python3 $(GATE_VAULT_PROBE_PY) $$keys; } \
+	    | jq -s 'group_by(.key) | map({key: .[0].key, twins: ["fastify","fastapi"], ok: (all(.[]; .ok))}) | .[]' \
+	    | jq -c .
+
+# ------------------------------------------------------------------------------
+# addon-lint — enforce numeric prefix on server/*/config/{environment,lifecycles,routes}
+# ------------------------------------------------------------------------------
+
+GATE_ADDON_LINT := $(ORCH_DIR_GATES)/addon-lint.sh
+
+.PHONY: addon-lint
+addon-lint: ## (gate) enforce 01/10/20/30 prefix on server/*/config/{environment,lifecycles,routes} (Checklist 3)
+	@$(GATE_ADDON_LINT)
+
+.PHONY: addon-lint-json
+addon-lint-json: ## (gate) addon-lint findings as JSON-lines
+	@$(GATE_ADDON_LINT) --json
+
+# ------------------------------------------------------------------------------
+# twin-scope / twin-diff — twin parity tooling
+# ------------------------------------------------------------------------------
+
+GATE_TWIN_SCOPE := $(ORCH_DIR_GATES)/twin-scope.sh
+GATE_TWIN_DIFF  := $(ORCH_DIR_GATES)/twin-diff.sh
+
+FILES ?=
+WARN_ONLY ?=
+
+.PHONY: twin-scope
+twin-scope: ## (gate) classify FILES="<paths>" by twin (Checklist 3)
+	@if [ -z "$(FILES)" ]; then echo 'usage: make twin-scope FILES="path1 path2 ..."' >&2; exit 64; fi
+	@$(GATE_TWIN_SCOPE) $(FILES) | column -t -s '|'
+
+.PHONY: twin-scope-json
+twin-scope-json: ## (gate) twin-scope output as JSON-lines
+	@if [ -z "$(FILES)" ]; then echo 'usage: make twin-scope-json FILES="..."' >&2; exit 64; fi
+	@$(GATE_TWIN_SCOPE) --json $(FILES)
+
+.PHONY: twin-diff
+twin-diff: ## (gate) detect drift between fastify and fastapi (static + runtime routes) (Checklist 4)
+	@$(GATE_TWIN_DIFF) $(if $(WARN_ONLY),--warn-only)
+
+.PHONY: twin-diff-json
+twin-diff-json: ## (gate) twin-diff drift items as JSON-lines
+	@$(GATE_TWIN_DIFF) --json
+
+# ------------------------------------------------------------------------------
+# security-scan — npm audit + uv pip audit + GHE secret-scanning alerts API
+# ------------------------------------------------------------------------------
+#
+# Secret scanning is delegated to GitHub (Enterprise) Advanced Security: the
+# server-side scan is the source of truth. Local scanners (gitleaks/trufflehog)
+# are intentionally NOT used. We just read open alerts from the REST API.
+#
+#   GH_TOKEN_SECSCAN /    — token with `secret_scanning_alerts: read` on this
+#   GITHUB_TOKEN_SECSCAN    repo. Either name accepted; GH_TOKEN_SECSCAN wins.
+#                           In CI: pass from a repo/org secret of either name.
+#   GITHUB_API_URL        — auto-set by GitHub Actions; falls back to
+#                           https://api.github.com for local dev on dotcom.
+
+GATE_SECRET_SCAN := $(ORCH_DIR_GATES)/secret-scan-ghe.sh
+
+.PHONY: secret-scan
+secret-scan: ## (gate) read GHE secret-scanning alerts via REST API; CI=1 fails when neither GH_TOKEN_SECSCAN nor GITHUB_TOKEN_SECSCAN is set
+	@if [ -z "$$GH_TOKEN_SECSCAN" ] && [ -z "$$GITHUB_TOKEN_SECSCAN" ]; then \
+	  if [ -n "$(CI)" ]; then \
+	    echo "ERROR: neither GH_TOKEN_SECSCAN nor GITHUB_TOKEN_SECSCAN set in CI — cannot query GHE secret-scanning alerts" >&2; \
+	    exit 1; \
+	  fi; \
+	  echo "WARN: neither GH_TOKEN_SECSCAN nor GITHUB_TOKEN_SECSCAN set — skipping GHE secret-scan"; \
+	  echo "  → export a token with secret_scanning_alerts:read to enable"; \
+	  exit 0; \
+	fi; \
+	$(GATE_SECRET_SCAN)
+
+.PHONY: secret-scan-json
+secret-scan-json: ## (gate) GHE secret-scanning alerts as JSON-lines (silent skip without token)
+	@if [ -z "$$GH_TOKEN_SECSCAN" ] && [ -z "$$GITHUB_TOKEN_SECSCAN" ]; then exit 0; fi; \
+	  $(GATE_SECRET_SCAN) --json
+
+.PHONY: security-scan
+security-scan: ## (gate) npm audit + pip audit + GHE secret-scan (Checklist 4) — CI=1 fails on missing pip-audit / GH_TOKEN_SECSCAN
+	@set -o pipefail; \
+	  rc=0; \
+	  echo "==> npm audit (fastify)"; \
+	  if [ -d server/fastify ]; then \
+	    npm_out=$$( cd server/fastify && npm audit --omit=dev 2>&1 ); \
+	    npm_rc=$$?; \
+	    echo "$$npm_out" | tail -20; \
+	    if [ "$$npm_rc" -ne 0 ]; then \
+	      registry=$$( cd server/fastify && npm config get registry 2>/dev/null ); \
+	      if echo "$$npm_out" | grep -qE '(advisories/bulk|404 Not Found)' && echo "$$registry" | grep -qE '(localhost|127\.0\.0\.1|verdaccio)'; then \
+	        echo "  HINT: registry $$registry returned 404 for the advisories endpoint."; \
+	        echo "        This is typical for Verdaccio without advisory passthrough. Override with:"; \
+	        echo "          NPM_CONFIG_REGISTRY=https://registry.npmjs.org make security-scan"; \
+	      fi; \
+	      rc=$$npm_rc; \
+	    fi; \
+	  else echo "  (server/fastify missing)"; fi; \
+	  echo ""; echo "==> pip-audit (fastapi)"; \
+	  if [ -d server/fastapi ] && command -v pip-audit >/dev/null; then \
+	    ( cd server/fastapi && pip-audit ) 2>&1 | tail -20 || rc=$$?; \
+	  elif [ -d server/fastapi ] && [ -n "$(CI)" ]; then \
+	    echo "ERROR: pip-audit absent in CI environment" >&2; \
+	    echo "  install via: pipx install pip-audit" >&2; \
+	    rc=1; \
+	  elif [ -d server/fastapi ] && command -v uv >/dev/null; then \
+	    echo "  (uv has no audit subcommand; install pip-audit: pipx install pip-audit)"; \
+	  else echo "  (server/fastapi or pip-audit missing)"; fi; \
+	  echo ""; echo "==> GHE secret-scanning alerts"; \
+	  $(MAKE) -s secret-scan || rc=$$?; \
+	  if [ "$$rc" -eq 0 ]; then echo ""; echo "security-scan: OK"; else echo ""; echo "security-scan: FAILED (rc=$$rc)"; exit $$rc; fi
+
+.PHONY: security-scan-report
+security-scan-report: ## (gate) like security-scan but always exit 0 (CI report mode)
+	-@$(MAKE) -s security-scan
+
+.PHONY: security-scan-json
+security-scan-json: ## (gate) security-scan results as JSON-lines (one per check: npm-audit / pip-audit / secret-scan)
+	@npm_status=skip; npm_detail="server/fastify missing"; \
+	  if [ -d server/fastify ]; then \
+	    if ( cd server/fastify && npm audit --omit=dev --json >/dev/null 2>&1 ); then \
+	      npm_status=pass; npm_detail=""; \
+	    else \
+	      rc=$$?; \
+	      npm_status=fail; \
+	      npm_detail="npm audit exit $$rc (registry or vulnerabilities)"; \
+	    fi; \
+	  fi; \
+	  printf '{"check":"npm-audit","status":"%s","detail":"%s"}\n' "$$npm_status" "$$npm_detail"; \
+	  pip_status=skip; pip_detail="pip-audit not installed (pipx install pip-audit)"; \
+	  if [ -d server/fastapi ]; then \
+	    if command -v pip-audit >/dev/null 2>&1; then \
+	      if ( cd server/fastapi && pip-audit >/dev/null 2>&1 ); then \
+	        pip_status=pass; pip_detail=""; \
+	      else \
+	        pip_status=fail; pip_detail="pip-audit reported vulnerabilities"; \
+	      fi; \
+	    fi; \
+	  else \
+	    pip_detail="server/fastapi missing"; \
+	  fi; \
+	  printf '{"check":"pip-audit","status":"%s","detail":"%s"}\n' "$$pip_status" "$$pip_detail"; \
+	  scan_status=skip; scan_detail="GH_TOKEN_SECSCAN / GITHUB_TOKEN_SECSCAN unset"; \
+	  if [ -n "$$GH_TOKEN_SECSCAN" ] || [ -n "$$GITHUB_TOKEN_SECSCAN" ]; then \
+	    if alerts=$$( $(GATE_SECRET_SCAN) --json 2>&1 ); then \
+	      if [ -z "$$alerts" ]; then \
+	        scan_status=pass; scan_detail=""; \
+	      else \
+	        n=$$(echo "$$alerts" | wc -l | tr -d ' '); \
+	        scan_status=fail; scan_detail="$$n open alert(s)"; \
+	      fi; \
+	    else \
+	      scan_status=fail; scan_detail="API call failed (check token / GITHUB_API_URL)"; \
+	    fi; \
+	  fi; \
+	  printf '{"check":"secret-scan","status":"%s","detail":"%s"}\n' "$$scan_status" "$$scan_detail"
+
+# ------------------------------------------------------------------------------
+# changelog-check + agent-md (content-hash)
+# ------------------------------------------------------------------------------
+
+GATE_CHANGELOG       := $(ORCH_DIR_GATES)/changelog-check.sh
+GATE_AGENT_MD        := $(ORCH_DIR_GATES)/agent-md-check.sh
+GATE_AGENT_MD_REHASH := $(ORCH_DIR_GATES)/agent-md-rehash.sh
+
+.PHONY: changelog-check
+changelog-check: ## (gate) confirm a .changelogs/<repo>/ entry exists since merge-base (Checklist 5)
+	@$(GATE_CHANGELOG)
+
+.PHONY: changelog-check-json
+changelog-check-json: ## (gate) changelog-check output as JSON
+	@$(GATE_CHANGELOG) --json
+
+.PHONY: agent-md-check
+agent-md-check: ## (gate) per-twin .agent.md surface-hash matches surface dirs (Checklist 5)
+	@$(GATE_AGENT_MD)
+
+.PHONY: agent-md-check-json
+agent-md-check-json: ## (gate) agent-md-check as JSON-lines
+	@$(GATE_AGENT_MD) --json
+
+.PHONY: agent-md-rehash
+agent-md-rehash: ## refresh embedded surface-hash in every .agent.md after intentional regeneration
+	@$(GATE_AGENT_MD_REHASH)
+
+# ------------------------------------------------------------------------------
+# pre-push aggregator + interactive checklist walker
+# ------------------------------------------------------------------------------
+#
+# Two flavours:
+#   pre-push       — fast (~2 min budget): dropped `ci` because it pulls full deps
+#                    via ci-install + lint + test + build (5 min+). Uses
+#                    projections-check + subtree-lint instead — they catch the
+#                    same drift signals without a toolchain dependency.
+#   pre-push-full  — heavyweight: pre-push + ci. Use locally before opening a PR
+#                    that needs full per-package CI verification.
+#
+# Order matches Checklist.md step order:
+#   addon-lint → vault-check → twin-diff → projections-check → subtree-lint
+#     → security-scan → changelog-check → agent-md-check
+#   (pre-push-full appends `ci` at the end)
+
+KEEP_GOING ?=
+
+PRE_PUSH_GATES := \
+  addon-lint \
+  vault-check \
+  twin-diff \
+  projections-check \
+  subtree-lint \
+  security-scan \
+  changelog-check \
+  agent-md-check
+
+PRE_PUSH_FULL_GATES := $(PRE_PUSH_GATES) ci
+
+GATE_WALKER := $(ORCH_DIR_GATES)/checklist-walker.sh
+
+.PHONY: pre-push
+pre-push: ## (gate) run every Checklist gate in order, stop-on-fail (KEEP_GOING=1 to continue)
+	@fails=0; total=0; \
+	  for gate in $(PRE_PUSH_GATES); do \
+	    total=$$((total+1)); \
+	    echo ""; echo "==> $$gate"; \
+	    if $(MAKE) -s $$gate; then \
+	      echo "    ✓ $$gate"; \
+	    else \
+	      echo "    ✗ $$gate"; \
+	      fails=$$((fails+1)); \
+	      if [ -z "$(KEEP_GOING)" ]; then exit 1; fi; \
+	    fi; \
+	  done; \
+	  echo ""; \
+	  if [ "$$fails" -gt 0 ]; then echo "pre-push: $$fails of $$total gate(s) failed"; exit "$$fails"; fi; \
+	  echo "pre-push: all $$total gates passed"
+
+.PHONY: pre-push-json
+pre-push-json: ## (gate) pre-push as JSON-lines (one per gate with timing)
+	@for gate in $(PRE_PUSH_GATES); do \
+	  start=$$(python3 -c 'import time; print(int(time.time()*1000))'); \
+	  if $(MAKE) -s $$gate >/dev/null 2>&1; then status=pass; else status=fail; fi; \
+	  end=$$(python3 -c 'import time; print(int(time.time()*1000))'); \
+	  printf '{"gate":"%s","status":"%s","duration_ms":%d}\n' "$$gate" "$$status" $$((end - start)); \
+	done
+
+.PHONY: pre-push-full
+pre-push-full: ## (gate) pre-push + heavyweight `make ci` (5min+; for full local PR validation)
+	@fails=0; total=0; \
+	  for gate in $(PRE_PUSH_FULL_GATES); do \
+	    total=$$((total+1)); \
+	    echo ""; echo "==> $$gate"; \
+	    if $(MAKE) -s $$gate; then \
+	      echo "    ✓ $$gate"; \
+	    else \
+	      echo "    ✗ $$gate"; \
+	      fails=$$((fails+1)); \
+	      if [ -z "$(KEEP_GOING)" ]; then exit 1; fi; \
+	    fi; \
+	  done; \
+	  echo ""; \
+	  if [ "$$fails" -gt 0 ]; then echo "pre-push-full: $$fails of $$total gate(s) failed"; exit "$$fails"; fi; \
+	  echo "pre-push-full: all $$total gates passed"
+
+.PHONY: checklist
+checklist: ## (gate) walk Checklist.md gates interactively (CI=1 falls back to pre-push)
+	@$(GATE_WALKER)

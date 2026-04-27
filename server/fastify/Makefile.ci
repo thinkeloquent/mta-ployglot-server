@@ -1,0 +1,73 @@
+# server/fastify — CI Makefile (installed as Makefile.ci alongside the dev Makefile)
+#
+# Idempotent. `make -f Makefile.ci ci` is the single command CI runs.
+
+SHELL          := /bin/bash
+.SHELLFLAGS    := -eu -o pipefail -c
+.DEFAULT_GOAL  := help
+
+PKG_DIR        := $(abspath $(CURDIR))
+NPM            ?= npm
+NODE           ?= node
+PARENT_DIR     := ../../ployglots/mta-ployglot-server-bootstrap/fastify_server
+FETCH_CLIENT_DIR := ../../ployglots/mta-ployglot-pkg-fetch-client/packages/ts
+
+# ---------------------------------------------------------------------------
+# meta
+# ---------------------------------------------------------------------------
+
+.PHONY: help
+help: ## Show available targets
+	@awk 'BEGIN{FS=":.*##"; printf "\nTargets:\n"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+.PHONY: print-env
+print-env: ## Print tool versions (debug)
+	@echo "pkg-dir : $(PKG_DIR)"
+	@$(NODE) --version
+	@$(NPM) --version
+
+# ---------------------------------------------------------------------------
+# lifecycle (CI contract)
+# ---------------------------------------------------------------------------
+
+.PHONY: install
+install: build-deps ## Install deps (mutable lockfile OK)
+	$(NPM) install
+
+.PHONY: ci-install
+ci-install: build-deps ## Deterministic install for CI (npm ci against lockfile)
+	@if [ -f package-lock.json ]; then $(NPM) ci; else $(NPM) install; fi
+
+.PHONY: build-deps
+build-deps: ## Build sibling packages whose dist/ this server consumes
+	$(MAKE) -C $(PARENT_DIR) build 2>/dev/null || (cd $(PARENT_DIR) && $(NPM) run build)
+	$(MAKE) -C $(FETCH_CLIENT_DIR) build 2>/dev/null || (cd $(FETCH_CLIENT_DIR) && $(NPM) run build)
+
+.PHONY: lint
+lint: ## Static checks (config files + ESM syntax sanity)
+	@$(NODE) -e "import('./config/lifecycles/_shared_fetch.mjs').then(()=>console.log('shared OK'))"
+	@$(NODE) -e "import('./config/lifecycles/_fetch_factories.mjs').then(()=>console.log('factories OK'))"
+	@$(NODE) -e "import('./config/lifecycles/20_fetch_clients.lifecycle.mjs').then(()=>console.log('lifecycle OK'))"
+
+.PHONY: test
+test: ## Run the package test suite (vitest)
+	$(NPM) test
+
+.PHONY: build
+build: ## Server runtime — no build step (entry runs main.mjs directly)
+	@echo "fastify server is runtime-only; nothing to build"
+
+.PHONY: clean
+clean: ## Remove generated artifacts (none for a runtime server)
+	@rm -rf .quickstart.log .quickstart.pid
+
+.PHONY: distclean
+distclean: clean ## Also remove node_modules and lockfile
+	@rm -rf node_modules package-lock.json
+
+# ---------------------------------------------------------------------------
+# CI aggregate
+# ---------------------------------------------------------------------------
+
+.PHONY: ci
+ci: ci-install lint test build ## Full CI pipeline (install → lint → test → build)

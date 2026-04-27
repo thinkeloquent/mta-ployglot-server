@@ -1,0 +1,62 @@
+{
+  "schema": "ployglot-agentmd-usages-apps/v1",
+  "generated_at": "2026-04-27T14:50:27Z",
+  "repo": "mta-ployglot-server",
+  "kind": "polyglot-apps-monorepo",
+  "layout": "flat-under-server",
+  "languages": ["mjs", "py"],
+  "packages": [
+    {
+      "key": "mta-fastify-server",
+      "kind": "app",
+      "language": "mjs",
+      "path": "server/fastify",
+      "agent_md": "server/fastify/.agent.md",
+      "publishable": false,
+      "run": "make dev-fastify",
+      "twin_of": { "key": "mta-fastapi-server", "language": "py" },
+      "stale": false
+    },
+    {
+      "key": "mta-fastapi-server",
+      "kind": "app",
+      "language": "py",
+      "path": "server/fastapi",
+      "agent_md": "server/fastapi/.agent.md",
+      "publishable": false,
+      "run": "make dev-fastapi",
+      "twin_of": { "key": "mta-fastify-server", "language": "mjs" },
+      "stale": false
+    }
+  ],
+  "unclassified": [
+    {
+      "path": "ployglots/mta-ployglot-server-bootstrap",
+      "reason": "sibling-repo symlink → ../../mta-ployglot-server-bootstrap (read-only, upstream-owned, has its own .agent.md). No .gitmodules; symlink topology is laid by scripts/workspace/bootstrap.sh."
+    },
+    {
+      "path": "playwright-tests",
+      "reason": "e2e harness, not a package"
+    },
+    {
+      "path": "packages/orchestrator",
+      "reason": "Makefile-only, no manifest. Ships the canonical 8-target package CI surface (help install ci-install lint test build clean ci) wrapping subtree-lint + bats + emitter idempotency + doctor."
+    },
+    {
+      "path": "server/parity",
+      "reason": "internal-dev-harness (mta-server-parity, private:true) — runs both runtimes side-by-side and diffs output, not an app or library"
+    }
+  ],
+  "stale_files": [],
+  "external_siblings": [
+    {
+      "path": "../mta-ployglot-server-print-routes",
+      "consumed_via": "file:/path: dep from both apps"
+    },
+    {
+      "path": "../mta-ployglot-pkg-fetch-client",
+      "consumed_via": "file:/path: dep from both apps",
+      "has_own_agent_md": true
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+# server/fastapi/.dockerignore
+# Keep the build context small and deterministic.
+
+.git
+.gitmodules
+.gitignore
+.github
+.claude
+.agent
+.agents
+.Agent.md
+.agent.md
+.agent.json
+*.md
+LICENSE
+
+.vscode
+.idea
+*.swp
+**/.DS_Store
+
+**/*.log
+.smoke-logs
+**/.cache
+**/.nx
+
+**/__pycache__
+**/.venv
+**/*.egg-info
+**/.pytest_cache
+**/dist
+
+**/node_modules
+**/.turbo
+
+server/fastify

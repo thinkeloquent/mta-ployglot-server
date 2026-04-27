@@ -1,0 +1,128 @@
+name: Release Assemble (on PR merge)
+
+# Runs ONLY when a PR targeting a release/* branch is closed AND merged
+# (`if: github.event.pull_request.merged == true`). Pulls each sibling
+# subtree at the sibling's HEAD SHA at merge time, writes the manifest
+# recording exactly what was pulled, commits both atomically, and pushes
+# the release branch.
+#
+# Replaces the deleted push-triggered .github/workflows/release-assemble.yml.
+# Live assembly is workflow-only — operators reproduce past assemblies
+# locally via `make release-assemble REF=... MANIFEST=...`.
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - 'release/**'
+
+permissions:
+  contents: write       # push to release/* and create tags
+  pull-requests: write  # post status comment on the merged PR
+
+# Queue same-branch assemblies (don't kill them) so two PRs merged in quick
+# succession produce sequential, ordered commits. Different release branches
+# run in parallel.
+concurrency:
+  group: release-assemble-${{ github.event.pull_request.base.ref }}
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout release branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+          # RELEASE_ASSEMBLE_TOKEN: GitHub App installation token with
+          # contents:read on every sibling repo named in workspace.toml +
+          # contents:write on this orchestration repo.
+          token: ${{ secrets.RELEASE_ASSEMBLE_TOKEN }}
+
+      - name: Configure git author
+        run: |
+          git config user.name  "release-assemble[bot]"
+          git config user.email "release-assemble@users.noreply.github.com"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Hydrate siblings + doctor
+        run: |
+          export WORKSPACE_OVERRIDE_ROOT="$RUNNER_TEMP/siblings"
+          ./scripts/workspace/bootstrap.sh hydrate
+          make doctor
+
+      - name: Subtree pull at sibling HEADs (writes /tmp/snapshot.jsonl)
+        run: ./scripts/workspace/release-assemble-from-siblings.sh --ref ${{ github.event.pull_request.base.ref }} --apply
+
+      - name: Emit manifest from assembly snapshot
+        run: ./scripts/workspace/orchestrator/emit-assembly-manifest.sh --ref ${{ github.event.pull_request.base.ref }}
+
+      - name: Push release branch (subtree commits + manifest)
+        run: git push origin HEAD:${{ github.event.pull_request.base.ref }}
+
+      - name: Subtree size guard
+        run: make subtree-size-check
+
+      - name: Post status comment on merged PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ job.status }}';
+            const ref = '${{ github.event.pull_request.base.ref }}';
+            const slug = ref.replace(/[\/\.]/g, '-').replace(/\s/g, '');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `Release assembly **${status}** for \`${ref}\`. Manifest: \`.dev/release-manifests/${slug}.toml\``,
+            });
+
+      - name: Record failure artifacts on release branch
+        if: failure()
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          JOB_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          FAIL_DIR=".failures/${JOB_ID}"
+
+          # Stash candidate artifacts outside the worktree before we
+          # reset away any partial in-progress state.
+          STAGE="$RUNNER_TEMP/failure-stage"
+          mkdir -p "$STAGE"
+          cp /tmp/snapshot.jsonl "$STAGE/" 2>/dev/null || true
+          [[ -d .dev/release-manifests ]] && cp -r .dev/release-manifests "$STAGE/release-manifests" || true
+          [[ -f .git/.subtree-size-before ]] && cp .git/.subtree-size-before "$STAGE/" || true
+
+          if [[ -z "$(ls -A "$STAGE" 2>/dev/null)" ]]; then
+            echo "No failure artifacts to record"
+            exit 0
+          fi
+
+          # Sync worktree to the remote tip of the release branch so the
+          # failure commit lands cleanly on top of whatever is published
+          # (including the assembly commits if the push step succeeded).
+          git fetch origin "$BASE_REF"
+          git reset --hard "origin/$BASE_REF"
+          git clean -fd
+
+          mkdir -p "$FAIL_DIR"
+          cp -r "$STAGE"/. "$FAIL_DIR/"
+
+          git add "$FAIL_DIR"
+          git commit -m "chore(release): record failure artifacts for run ${JOB_ID}"
+          git push origin "HEAD:$BASE_REF"

@@ -1,0 +1,297 @@
+# Makefile.subtree — release branch assembly via squashed `git subtree`,
+# plus per-subtree build orchestration across the workspace registry.
+#
+# Release flow (Feature 03 — PR-driven):
+#   Live assembly is CI-only:
+#     .github/workflows/release-assemble-on-pr-merge.yml
+#       triggers on PR-merged into release/**, pulls every sibling at HEAD,
+#       writes .dev/release-manifests/<ref-slug>.toml, commits, pushes.
+#   Local make release-assemble is reproduction-only:
+#     make release-assemble REF=release/<X> MANIFEST=.dev/release-manifests/<slug>.toml
+#       Re-runs the same subtree pulls against pinned SHAs from the manifest
+#       so an operator can byte-compare a past release locally.
+#   Tag propagation back to siblings:
+#     make release-tag-propagate TAG=v<X> REF=release/<X> [CONFIRM=1] [FORCE=1]
+#       Reads the workflow-emitted manifest and pushes TAG at the pinned SHA
+#       on every sibling. Idempotent.
+#
+# Usage:
+#   make release-assemble REF=release/v1.2.0 MANIFEST=.dev/release-manifests/release-v1-2-0.toml
+#   make release-preflight REF=release/v1.2.0    (gate set across root + every sibling)
+#   make release-tag-propagate TAG=v1.2.0 REF=release/v1.2.0 CONFIRM=1
+#   make release-verify
+#   make subtree-rollback FROM=<sha>             (CONFIRM=1 to apply)
+#   make subtree-rollback-push FROM=<sha>        (CONFIRM=1 to push)
+#   make subtree-lint                            (catches missing --squash)
+#   make subtree-size-check                      (catches .git/ growth post-assembly)
+#   make install-subtree                         (Facade: install at each sibling root)
+#   make ci-install-subtree                      (Facade: deterministic install at each sibling root)
+#   make build-subtree                           (Facade: build at each sibling root)
+#
+# Every assembly is gated by `subtree-lint` (static guard) and produces a
+# `.git/`-size snapshot for `subtree-size-check` (dynamic guard).
+#
+# install/build/ci-install run as a Facade: at each sibling root, dispatch to
+# whichever native interface the repo exposes (root Makefile target → root
+# package.json scripts → known non-canonical layouts like fastify_server/).
+# Each sibling owns how it fans out internally; the orchestrator just calls
+# the right top-level command. Override the entry list at invocation:
+#   make build-subtree SUBTREE_BUILD_ENTRIES="ployglots/foo ployglots/bar"
+
+# Note: variable names are SUBTREE_*-prefixed to avoid colliding with GNU
+# make built-ins (e.g. LINT = lint, AS = as) that ?= cannot override.
+SUBTREE_ASSEMBLE   ?= bash $(ROOT_DIR)/scripts/workspace/subtree-assemble.sh
+SUBTREE_LINT       ?= bash $(ROOT_DIR)/scripts/workspace/subtree-lint.sh
+SUBTREE_SIZE_CHECK ?= bash $(ROOT_DIR)/scripts/workspace/subtree-size-check.sh
+
+# Release-flow helpers (Feature 03).
+ORCH_DIR_RELEASE        ?= $(ROOT_DIR)/scripts/workspace/orchestrator
+ORCH_HELPER_RELEASE     ?= $(ORCH_DIR_RELEASE)/_for-each-sibling.sh
+ORCH_SIBLING_GATE       ?= $(ORCH_DIR_RELEASE)/sibling-gate.sh
+ORCH_RELEASE_ASSEMBLE   ?= $(ROOT_DIR)/scripts/workspace/release-assemble-from-siblings.sh
+ORCH_RELEASE_VALIDATOR  ?= $(ORCH_DIR_RELEASE)/validate-release-manifest.sh
+ORCH_SIBLING_TAG        ?= $(ORCH_DIR_RELEASE)/sibling-tag.sh
+
+.PHONY: release-assemble release-verify
+.PHONY: subtree-rollback subtree-rollback-push subtree-lint subtree-size-check
+.PHONY: install-subtree ci-install-subtree build-subtree
+.PHONY: release-preflight release-preflight-json
+.PHONY: release-tag-propagate release-tag-propagate-json
+
+# Sibling entries that participate in install/build/ci-install orchestration.
+# Tools-only repos (rust binaries, prompt-injection notes) are intentionally
+# excluded — they're not part of the runtime dependency graph the servers consume.
+SUBTREE_BUILD_ENTRIES ?= \
+  ployglots/mta-ployglot-api-aws-s3 \
+  ployglots/mta-ployglot-api-github-project \
+  ployglots/mta-ployglot-pkg-fetch-client \
+  ployglots/mta-ployglot-pkg-figma-api \
+  ployglots/mta-ployglot-pkg-vault \
+  ployglots/mta-ployglot-server-bootstrap \
+  ployglots/mta-ployglot-server-print-routes
+
+# Per-entry Facade dispatcher. For each sibling root, pick the first matching
+# native interface and run it; fall through to "skip" if none recognized.
+#
+# Dispatch order:
+#   1. Root Makefile with the requested target (e.g. pkg-vault, pkg-figma-api,
+#      print-routes — these own their own per-language fan-out).
+#   2. Root package.json (e.g. api-aws-s3, api-github-project, pkg-fetch-client) —
+#      `npm install` for install/ci-install (`npm ci` for ci-install when a
+#      package-lock.json is present), `npm run <target>` for build if a script
+#      with that name exists.
+#   3. server-bootstrap layout: cd fastify_server/ && npm <action>. The
+#      fastapi_server/ side is intentionally not handled here — Python install
+#      lives in compose's host-side install path (see Makefile.compose).
+#
+# Failures from any entry don't abort the loop — the worst exit code is
+# returned at the end so CI sees every broken sibling, not just the first.
+define dispatch_subtree_target
+	@set -euo pipefail; \
+	if [ -z "$(SUBTREE_BUILD_ENTRIES)" ]; then echo "skip: SUBTREE_BUILD_ENTRIES empty"; exit 0; fi; \
+	case "$(1)" in install|ci-install|build) \
+	  registry=$$(npm config get registry 2>/dev/null || echo ""); \
+	  if [ -n "$$registry" ] && [ "$$registry" != "undefined" ]; then \
+	    if ! curl -sS --max-time 3 --connect-timeout 2 -o /dev/null "$$registry" >/dev/null 2>&1; then \
+	      echo "FAIL: npm registry unreachable: $$registry"; \
+	      echo "      hint: start your local registry (e.g. verdaccio), or override:"; \
+	      echo "      NPM_CONFIG_REGISTRY=https://registry.npmjs.org make $@"; \
+	      exit 1; \
+	    fi; \
+	  fi ;; esac; \
+	rc=0; \
+	for entry in $(SUBTREE_BUILD_ENTRIES); do \
+	  base=$(ROOT_DIR)/$$entry; \
+	  if [ ! -d $$base ]; then echo "skip: $$entry not present on disk"; continue; fi; \
+	  if [ -f $$base/Makefile ] && awk -v tgt='$(1)' '/^[a-zA-Z_.-][^=]*:/ { sub(/:.*/, ""); for (i=1;i<=NF;i++) if ($$i==tgt) { print "y"; exit } }' $$base/Makefile | grep -q y; then \
+	    echo "==> $$entry: make $(1) (root Makefile)"; \
+	    $(MAKE) -C $$base $(1) || rc=$$?; \
+	    continue; \
+	  fi; \
+	  if [ -f $$base/package.json ]; then \
+	    case "$(1)" in \
+	      install) \
+	        echo "==> $$entry: npm install (root package.json)"; \
+	        (cd $$base && npm install --no-audit --no-fund --foreground-scripts --loglevel=info) || rc=$$?; \
+	        continue ;; \
+	      ci-install) \
+	        if [ -f $$base/package-lock.json ]; then \
+	          echo "==> $$entry: npm ci (root package.json)"; \
+	          (cd $$base && npm ci --no-audit --no-fund --foreground-scripts --loglevel=info) || rc=$$?; \
+	        else \
+	          echo "==> $$entry: npm install (no lockfile, falling back from npm ci)"; \
+	          (cd $$base && npm install --no-audit --no-fund --foreground-scripts --loglevel=info) || rc=$$?; \
+	        fi; \
+	        continue ;; \
+	      build) \
+	        if grep -qE '"build"[[:space:]]*:' $$base/package.json; then \
+	          echo "==> $$entry: npm run build (root package.json)"; \
+	          (cd $$base && npm run build) || rc=$$?; \
+	        else \
+	          echo "skip: $$entry has no build script in package.json"; \
+	        fi; \
+	        continue ;; \
+	    esac; \
+	  fi; \
+	  if [ -d $$base/fastify_server ] && [ -f $$base/fastify_server/package.json ]; then \
+	    case "$(1)" in \
+	      install) \
+	        echo "==> $$entry/fastify_server: npm install"; \
+	        (cd $$base/fastify_server && npm install --no-audit --no-fund --foreground-scripts --loglevel=info) || rc=$$?; \
+	        continue ;; \
+	      ci-install) \
+	        if [ -f $$base/fastify_server/package-lock.json ]; then \
+	          echo "==> $$entry/fastify_server: npm ci"; \
+	          (cd $$base/fastify_server && npm ci --no-audit --no-fund --foreground-scripts --loglevel=info) || rc=$$?; \
+	        else \
+	          echo "==> $$entry/fastify_server: npm install (no lockfile)"; \
+	          (cd $$base/fastify_server && npm install --no-audit --no-fund --foreground-scripts --loglevel=info) || rc=$$?; \
+	        fi; \
+	        continue ;; \
+	      build) \
+	        echo "==> $$entry/fastify_server: npm run build"; \
+	        (cd $$base/fastify_server && npm run build) || rc=$$?; \
+	        continue ;; \
+	    esac; \
+	  fi; \
+	  echo "skip: $$entry has no recognized $(1) interface"; \
+	done; \
+	exit $$rc
+endef
+
+install-subtree: ## (subtree) Facade install at each sibling root (Makefile → npm → fastify_server)
+	$(call dispatch_subtree_target,install)
+
+ci-install-subtree: ## (subtree) Facade ci-install at each sibling root (npm ci when lockfile present)
+	$(call dispatch_subtree_target,ci-install)
+
+build-subtree: ## (subtree) Facade build at each sibling root (Makefile → npm run build → fastify_server)
+	$(call dispatch_subtree_target,build)
+
+subtree-lint: ## Forbid `git subtree (add|pull|merge)` without --squash in tracked files
+	@$(SUBTREE_LINT)
+
+MANIFEST ?=
+
+release-assemble: subtree-lint ## Release: reproduce a past assembly locally from a manifest (REF=release/<X> MANIFEST=<path>)
+	@if [ -z "$(REF)" ]; then echo "ERROR: REF=release/<X> required" >&2; exit 64; fi
+	@if [ -z "$(MANIFEST)" ]; then \
+	  echo "ERROR: MANIFEST=<path> required for local release-assemble." >&2; \
+	  echo "" >&2; \
+	  echo "Live assembly is performed by the PR-merge workflow:" >&2; \
+	  echo "  .github/workflows/release-assemble-on-pr-merge.yml" >&2; \
+	  echo "" >&2; \
+	  echo "To reproduce a past assembly locally:" >&2; \
+	  slug=$$(printf '%s' "$(REF)" | tr '/.' '-' | tr -d ' '); \
+	  echo "  make release-assemble REF=$(REF) MANIFEST=.dev/release-manifests/$$slug.toml" >&2; \
+	  exit 64; \
+	fi
+	@$(ORCH_RELEASE_VALIDATOR) --manifest "$(MANIFEST)" --ref "$(REF)"
+	@$(SUBTREE_SIZE_CHECK) snapshot
+	@RELEASE_MANIFEST="$(MANIFEST)" $(ORCH_RELEASE_ASSEMBLE) --ref "$(REF)" --apply
+
+release-verify: ## doctor + make ci + assert every subtree_prefix is a real dir (release/* only)
+	@$(SUBTREE_ASSEMBLE) verify
+
+subtree-size-check: ## Compare .git/ size against the pre-assembly snapshot
+	@$(SUBTREE_SIZE_CHECK) check
+
+subtree-rollback: ## Hard-reset the current branch to FROM= (CONFIRM=1 required); release/* only
+	@if [ -z "$(FROM)" ]; then echo "FAIL: FROM=<sha> required"; exit 64; fi
+	@if [ "$(CONFIRM)" != "1" ]; then \
+	  echo "==> dry-run; pass CONFIRM=1 to apply"; \
+	  echo "would reset $$(git rev-parse --abbrev-ref HEAD) to $(FROM)"; \
+	  echo "commits that would be discarded:"; \
+	  git log --oneline $(FROM)..HEAD | head -20 || true; \
+	  exit 0; \
+	fi
+	@branch=$$(git rev-parse --abbrev-ref HEAD); \
+	  case "$$branch" in release/*) ;; *) echo "FAIL: must be on release/*; got '$$branch'"; exit 1;; esac
+	@git reset --hard $(FROM)
+	@echo "rolled back to $(FROM)"
+
+release-preflight: ## Release: run pre-push on root + sibling-gate on every sibling (REF=release/<X>)
+	@if [ -z "$(REF)" ]; then echo "ERROR: REF=release/<version> required" >&2; exit 64; fi
+	@echo "==> root: pre-push"
+	@root_rc=0; $(MAKE) -s pre-push || root_rc=$$?; \
+	  echo ""; \
+	  echo "==> siblings: gate dispatch"; \
+	  $(ORCH_HELPER_RELEASE) --cmd '$(ORCH_SIBLING_GATE)' --keep-going \
+	    | column -t -s '|'; \
+	  echo ""; \
+	  sib_fails=$$( $(ORCH_HELPER_RELEASE) --cmd '$(ORCH_SIBLING_GATE) --json' --keep-going --json 2>/dev/null \
+	    | jq -s 'map(select(.status=="FAIL")) | length' ); \
+	  if [ "$$root_rc" -ne 0 ] || [ "$$sib_fails" -gt 0 ]; then \
+	    echo "release-preflight: FAILED (root_rc=$$root_rc, sibling_fails=$$sib_fails)"; \
+	    exit 1; \
+	  fi; \
+	  echo "release-preflight: OK"
+
+release-preflight-json: ## Release: preflight result as JSON-lines (root + per-sibling)
+	@if [ -z "$(REF)" ]; then echo "ERROR: REF=release/<version> required" >&2; exit 64; fi
+	@root_rc=0; $(MAKE) -s pre-push >/dev/null 2>&1 || root_rc=$$?; \
+	  if [ "$$root_rc" -eq 0 ]; then root_status=PASS; else root_status=FAIL; fi; \
+	  jq -nc --arg name "root" --arg status "$$root_status" --arg gate "pre-push" --arg scope "root" --arg ref "$(REF)" \
+	    '{scope:$$scope, name:$$name, gate:$$gate, status:$$status, release_ref:$$ref}'
+	@# Filter to only the inner gate records (drop _for-each-sibling wrapper status).
+	@$(ORCH_HELPER_RELEASE) --cmd '$(ORCH_SIBLING_GATE) --json' --keep-going --json \
+	  | jq -c --arg scope "sibling" --arg ref "$(REF)" 'select(has("gate")) | . + {scope:$$scope, release_ref:$$ref}'
+
+TAG ?=
+
+release-tag-propagate: ## Release: push TAG=v<X> on every sibling at SHAs from manifest for REF= (CONFIRM=1 to push, FORCE=1 to override mismatch)
+	@if [ -z "$(TAG)" ] || [ -z "$(REF)" ]; then \
+	  echo "ERROR: TAG=v<X> and REF=release/<X> required" >&2; \
+	  exit 64; \
+	fi
+	@SLUG=$$(printf '%s' "$(REF)" | tr '/.' '-' | tr -d ' '); \
+	  MANIFEST=".dev/release-manifests/$$SLUG.toml"; \
+	  if [ ! -f "$$MANIFEST" ]; then \
+	    echo "ERROR: manifest not found at $$MANIFEST" >&2; \
+	    echo "       (manifests are workflow-emitted; check that release-assemble-on-pr-merge.yml ran for $(REF))" >&2; \
+	    exit 1; \
+	  fi; \
+	  set -e; \
+	  source $(ORCH_DIR_RELEASE)/lib/manifest.sh; \
+	  manifest::sibling_names "$$MANIFEST" | while IFS= read -r name; do \
+	    sha=$$(manifest::sibling_sha "$$MANIFEST" "$$name"); \
+	    sib_path=$$(jq -r --arg n "$$name" '.entries[]|select(.name==$$n)|.local_path' .dev/workspace.toml.lock.json); \
+	    if [ -z "$$sib_path" ] || [ ! -d "$$sib_path/.git" ]; then \
+	      echo "$$name | $(TAG) | $$sha | SKIP (sibling not hydrated at $$sib_path)"; \
+	      continue; \
+	    fi; \
+	    ( cd "$$sib_path" && SIBLING_NAME="$$name" $(ORCH_SIBLING_TAG) --tag "$(TAG)" --sha "$$sha" $(if $(CONFIRM),--apply) $(if $(FORCE),--force) ) || true; \
+	  done
+
+release-tag-propagate-json: ## Release: tag-propagate output as JSON-lines on stdout
+	@if [ -z "$(TAG)" ] || [ -z "$(REF)" ]; then \
+	  echo "ERROR: TAG=v<X> and REF=release/<X> required" >&2; \
+	  exit 64; \
+	fi
+	@SLUG=$$(printf '%s' "$(REF)" | tr '/.' '-' | tr -d ' '); \
+	  MANIFEST=".dev/release-manifests/$$SLUG.toml"; \
+	  if [ ! -f "$$MANIFEST" ]; then \
+	    echo "{\"error\":\"manifest not found\",\"path\":\"$$MANIFEST\"}" >&2; \
+	    exit 1; \
+	  fi; \
+	  set -e; \
+	  source $(ORCH_DIR_RELEASE)/lib/manifest.sh; \
+	  manifest::sibling_names "$$MANIFEST" | while IFS= read -r name; do \
+	    sha=$$(manifest::sibling_sha "$$MANIFEST" "$$name"); \
+	    sib_path=$$(jq -r --arg n "$$name" '.entries[]|select(.name==$$n)|.local_path' .dev/workspace.toml.lock.json); \
+	    if [ -z "$$sib_path" ] || [ ! -d "$$sib_path/.git" ]; then \
+	      jq -nc --arg name "$$name" --arg tag "$(TAG)" --arg sha "$$sha" --arg path "$$sib_path" \
+	        '{name:$$name, tag:$$tag, sha:$$sha, action:"skip", status:"NOT-HYDRATED", pushed:false, detail:("missing "+$$path)}'; \
+	      continue; \
+	    fi; \
+	    ( cd "$$sib_path" && SIBLING_NAME="$$name" $(ORCH_SIBLING_TAG) --tag "$(TAG)" --sha "$$sha" --json $(if $(CONFIRM),--apply) $(if $(FORCE),--force) ) || true; \
+	  done
+
+subtree-rollback-push: ## Force-with-lease push after subtree-rollback (CONFIRM=1 required)
+	@if [ "$(CONFIRM)" != "1" ]; then \
+	  echo "==> dry-run; pass CONFIRM=1 to actually push --force-with-lease"; \
+	  exit 0; \
+	fi
+	@branch=$$(git rev-parse --abbrev-ref HEAD); \
+	  case "$$branch" in release/*) ;; *) echo "FAIL: must be on release/*; got '$$branch'"; exit 1;; esac
+	@git push origin HEAD --force-with-lease

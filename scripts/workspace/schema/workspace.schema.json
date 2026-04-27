@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mta.dev/schemas/workspace.schema.json",
+  "title": "Polyglot workspace registry",
+  "description": "Single source of truth for sibling polyglot packages. Read by scripts/workspace/{bootstrap,emit-*,doctor,subtree-*}.sh.",
+  "type": "object",
+  "required": ["entry"],
+  "additionalProperties": false,
+  "properties": {
+    "entry": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "remote",
+          "local_path",
+          "shell_path",
+          "language",
+          "subtree_prefix"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "description": "Kebab-case identifier, unique across the registry."
+          },
+          "remote": {
+            "type": "string",
+            "format": "uri",
+            "description": "Git remote URL (HTTPS or SSH)."
+          },
+          "local_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Where the sibling repo is cloned on disk, relative to the orchestration shell root."
+          },
+          "shell_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Where inside the orchestration shell the symlink to local_path is created."
+          },
+          "language": {
+            "type": "string",
+            "enum": ["node", "python", "go", "rust", "mixed"],
+            "description": "Drives which emitter and Makefile fragment iterates this entry."
+          },
+          "subtree_prefix": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path inside the assembled release branch where the subtree lands."
+          },
+          "default_ref": {
+            "type": "string",
+            "default": "main",
+            "description": "Branch or tag pulled at release-assembly time."
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,182 @@
+# Makefile.compose — docker-compose lifecycle + host-side install recipes.
+#
+# Owns: init, install (host), docker-install, ci-install, build, up, down,
+# logs, ps, healthz, smoke, lint, test, clean, distclean, docker, docker-stop,
+# print-env. The recipes here are lifted from the original monolithic
+# Makefile and remain byte-equivalent so `make -pnq` parity is preserved.
+
+# ---------------------------------------------------------------------------
+# meta
+# ---------------------------------------------------------------------------
+
+.PHONY: print-env
+print-env: ## Print tool versions (debug)
+	@echo "root-dir       : $(ROOT_DIR)"
+	@echo "fastify-port   : $(FASTIFY_PORT)"
+	@echo "fastapi-port   : $(FASTAPI_PORT)"
+	@echo "health-timeout : $(HEALTH_TIMEOUT)s"
+	@echo "dev-dir        : $(DEV_DIR)"
+	@echo -n "docker         : "; docker --version
+	@echo -n "docker compose : "; $(COMPOSE) version --short
+	@echo -n "node           : "; command -v node >/dev/null && node --version || echo "(not installed — dev-fastify unavailable)"
+	@echo -n "npm            : "; command -v npm  >/dev/null && npm  --version || echo "(not installed — dev-fastify unavailable)"
+	@echo -n "uv             : "; command -v uv   >/dev/null && uv   --version || echo "(not installed — dev-fastapi unavailable)"
+	@echo -n "git            : "; git --version
+
+# ---------------------------------------------------------------------------
+# submodule / sibling hydration
+# ---------------------------------------------------------------------------
+#
+# Three entry points, pick the one that matches how you want sibling repos
+# wired in:
+#
+#   init          regenerate .dev/workspace.toml.lock.json + init any
+#                 submodules. Does NOT clone or assemble siblings — useful
+#                 if you already have a hydrated workspace.
+#
+#   init-clone    hydrate siblings per workspace.toml as separate clones at
+#                 `../<name>/` with relative symlinks under `ployglots/<name>/`,
+#                 then re-emit every per-language manifest. This is the
+#                 default development topology.
+#
+#   init-subtree  hydrate siblings IN-TREE as squashed git subtrees under
+#                 `ployglots/<name>/`, on whatever branch is currently
+#                 checked out. Use when you want a self-contained checkout
+#                 with no sibling clones (CI runners, demos, single-repo
+#                 onboarding). Distinct from `release-assemble`, which
+#                 requires REF=release/* and is for release branch builds.
+
+.PHONY: init
+init: workspace-lock-emit ## Generate .dev/workspace.toml.lock.json + init any submodules (no sibling hydration)
+	git submodule update --init --recursive
+
+.PHONY: init-clone
+init-clone: ## Hydrate siblings as ../<name> clones + ployglots/<name> symlinks; re-emits manifests
+	bash $(ROOT_DIR)/scripts/workspace/bootstrap.sh
+
+.PHONY: init-subtree
+init-subtree: subtree-lint ## Hydrate siblings as squashed git subtrees under ployglots/ on the current branch
+	@ref=$$(git -C $(ROOT_DIR) rev-parse --abbrev-ref HEAD); \
+	  echo "==> assembling subtrees on '$$ref'"; \
+	  bash $(ROOT_DIR)/scripts/workspace/subtree-assemble.sh assemble "$$ref"
+	bash $(ROOT_DIR)/scripts/workspace/bootstrap.sh --re-emit-only
+
+# ---------------------------------------------------------------------------
+# lifecycle — build
+# ---------------------------------------------------------------------------
+
+.PHONY: install
+install: install-node install-python ## Install host-side deps (Node + Python) into server/*
+
+.PHONY: install-node
+install-node: ## npm install in server/fastify (pulls @mta/print-routes-fastify + fastify-server via file: refs)
+	cd $(SERVER_FASTIFY) && npm install
+
+.PHONY: install-python
+install-python: ## Create server/fastapi/.venv and pip install (bypasses poetry; fastapi_server + print-routes-fastapi editable)
+	@if [ -d $(SERVER_FASTAPI)/.venv ] && ! $(SERVER_FASTAPI)/.venv/bin/python --version 2>/dev/null | grep -q ' 3\.11\.'; then \
+	  echo "→ rebuilding .venv (existing Python is not 3.11.x)"; \
+	  rm -rf $(SERVER_FASTAPI)/.venv; \
+	fi
+	@test -d $(SERVER_FASTAPI)/.venv || $(PYTHON) -m venv $(SERVER_FASTAPI)/.venv
+	$(SERVER_FASTAPI)/.venv/bin/pip install --upgrade pip
+	$(SERVER_FASTAPI)/.venv/bin/pip install \
+	  -e $(BOOTSTRAP_DIR)/fastapi_server \
+	  -e $(ROOT_DIR)/../mta-ployglot-server-print-routes/packages/py \
+	  'uvicorn[standard]>=0.30'
+
+.PHONY: docker-install
+docker-install: ## Build/download both docker images (compose build — pulls base layers)
+	$(COMPOSE) build
+
+.PHONY: ci-install
+ci-install: ## Build both images with --pull (CI-safe, reproducible base layers)
+	$(COMPOSE) build --pull
+
+.PHONY: build
+build: docker-install ## Alias for docker-install — compose build IS the build artifact
+
+# ---------------------------------------------------------------------------
+# lifecycle — run
+# ---------------------------------------------------------------------------
+
+.PHONY: up
+up: doctor ## Start the stack (runs `doctor` first) and wait up to $(HEALTH_TIMEOUT)s for healthy
+	$(COMPOSE) up -d
+	@echo "==> waiting up to $(HEALTH_TIMEOUT)s for both services to be healthy"
+	@deadline=$$(( $$(date +%s) + $(HEALTH_TIMEOUT) )); \
+	while :; do \
+	  fh=$$(docker inspect --format '{{.State.Health.Status}}' mta-fastify 2>/dev/null || echo missing); \
+	  ah=$$(docker inspect --format '{{.State.Health.Status}}' mta-fastapi 2>/dev/null || echo missing); \
+	  printf '    fastify=%-10s fastapi=%-10s\n' "$$fh" "$$ah"; \
+	  if [ "$$fh" = "healthy" ] && [ "$$ah" = "healthy" ]; then break; fi; \
+	  if [ $$(date +%s) -ge $$deadline ]; then \
+	    echo "==> TIMEOUT — dumping logs"; \
+	    $(COMPOSE) logs --no-color --tail=200 fastify fastapi || true; \
+	    exit 1; \
+	  fi; \
+	  sleep 2; \
+	done
+	@echo "==> stack healthy (fastify=:$(FASTIFY_PORT), fastapi=:$(FASTAPI_PORT))"
+
+.PHONY: down
+down: ## Stop the stack (keeps volumes if any)
+	$(COMPOSE) down --remove-orphans
+
+.PHONY: logs
+logs: ## Tail logs from both services (Ctrl-C to stop)
+	$(COMPOSE) logs -f --tail=200
+
+.PHONY: ps
+ps: ## Show compose service status
+	$(COMPOSE) ps
+
+# ---------------------------------------------------------------------------
+# observability
+# ---------------------------------------------------------------------------
+
+.PHONY: healthz
+healthz: ## curl /healthz on both services and pretty-print the JSON
+	@echo "==> fastify :$(FASTIFY_PORT)/healthz"
+	@curl -fsS "http://127.0.0.1:$(FASTIFY_PORT)/healthz" \
+	  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d, indent=2, sort_keys=True))'
+	@echo "==> fastapi :$(FASTAPI_PORT)/healthz"
+	@curl -fsS "http://127.0.0.1:$(FASTAPI_PORT)/healthz" \
+	  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d, indent=2, sort_keys=True))'
+
+.PHONY: smoke
+smoke: ## Run the containerized end-to-end smoke (build → up → curl → down)
+	bash scripts/smoke-docker.sh
+
+# ---------------------------------------------------------------------------
+# quality gates
+# ---------------------------------------------------------------------------
+
+.PHONY: lint
+lint: ## Validate compose file schema + references
+	$(COMPOSE) config --quiet
+
+.PHONY: test
+test: smoke ## Run the smoke test (the stack's only test suite)
+
+# ---------------------------------------------------------------------------
+# cleanup
+# ---------------------------------------------------------------------------
+
+.PHONY: clean
+clean: ## Stop stack and remove volumes/orphans (idempotent)
+	$(COMPOSE) down -v --remove-orphans
+
+.PHONY: distclean
+distclean: clean ## Also remove built images (forces full rebuild next time)
+	-docker image rm mta-fastify:local mta-fastapi:local 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# docker one-shot
+# ---------------------------------------------------------------------------
+
+.PHONY: docker
+docker: dev-stop build up ## One-shot: build images then bring the stack up (docker-mode dev)
+
+.PHONY: docker-stop
+docker-stop: down ## Stop the docker-compose stack (alias for down)
