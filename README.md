@@ -694,6 +694,16 @@ The opt-in pre-push hook at `scripts/git-hooks/pre-push.sample` runs
 `make pre-push` automatically; enable with
 `git config core.hooksPath scripts/git-hooks`.
 
+## Workspace registry
+
+`workspace.toml` is the single source of truth for sibling-repo topology. To produce a Markdown summary suitable for plan-arg tables:
+
+```bash
+bash scripts/workspace/print-registry.sh > /tmp/registry.md
+```
+
+The output is one row per `[[entry]]` block. Pipe through `pbcopy` (macOS) or `xclip -selection clipboard` (Linux) to drop into a planning doc.
+
 ## License
 
 MIT.

@@ -54,6 +54,38 @@ dev-install-fastify: ## Build bootstrap into .dev/fastify + stage server/fastify
 	  echo "==> $(PRINT_ROUTES_DIR)/packages/mjs not found — clone mta-ployglot-server-print-routes alongside this repo"; exit 1; }
 	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@mta/print-routes-fastify
 	@ln -s $(PRINT_ROUTES_DIR)/packages/mjs $(DEV_FASTIFY_APP)/node_modules/@mta/print-routes-fastify
+	@# @org/env-resolve: workspace.toml entry pkg-env-resolve → symlink to sibling.
+	@test -d $(ENV_RESOLVE_DIR)/packages/ts/dist || { \
+	  echo "==> $(ENV_RESOLVE_DIR)/packages/ts/dist not found — run 'npm run build' in mta-ployglot-pkg-env-resolve/packages/ts"; exit 1; }
+	@mkdir -p $(DEV_FASTIFY_APP)/node_modules/@org
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@org/env-resolve
+	@ln -s $(ENV_RESOLVE_DIR)/packages/ts $(DEV_FASTIFY_APP)/node_modules/@org/env-resolve
+	@# @ployglot/app-yaml-loader: workspace.toml entry pkg-app-yaml-loader → symlink to sibling.
+	@test -d $(APP_YAML_LOADER_DIR)/packages/mjs || { \
+	  echo "==> $(APP_YAML_LOADER_DIR)/packages/mjs not found — clone mta-ployglot-pkg-app-yaml-loader into ployglots/"; exit 1; }
+	@mkdir -p $(DEV_FASTIFY_APP)/node_modules/@ployglot
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-loader
+	@ln -s $(APP_YAML_LOADER_DIR)/packages/mjs $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-loader
+	@# @ployglot/runtime-template-resolver (engine) — same sibling repo as F04 applier.
+	@test -d $(APP_YAML_OVERWRITE_DIR)/packages/engine-mjs || { \
+	  echo "==> $(APP_YAML_OVERWRITE_DIR)/packages/engine-mjs not found"; exit 1; }
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@ployglot/runtime-template-resolver
+	@ln -s $(APP_YAML_OVERWRITE_DIR)/packages/engine-mjs $(DEV_FASTIFY_APP)/node_modules/@ployglot/runtime-template-resolver
+	@# @ployglot/app-yaml-from-context (applier) — same sibling repo as F02 engine.
+	@test -d $(APP_YAML_OVERWRITE_DIR)/packages/applier-mjs || { \
+	  echo "==> $(APP_YAML_OVERWRITE_DIR)/packages/applier-mjs not found"; exit 1; }
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-from-context
+	@ln -s $(APP_YAML_OVERWRITE_DIR)/packages/applier-mjs $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-from-context
+	@# @ployglot/app-yaml-config
+	@test -d $(APP_YAML_CONFIG_DIR)/packages/mjs || { \
+	  echo "==> $(APP_YAML_CONFIG_DIR)/packages/mjs not found"; exit 1; }
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-config
+	@ln -s $(APP_YAML_CONFIG_DIR)/packages/mjs $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-config
+	@# @ployglot/app-yaml-fetch-config
+	@test -d $(APP_YAML_FETCH_CONFIG_DIR)/packages/mjs || { \
+	  echo "==> $(APP_YAML_FETCH_CONFIG_DIR)/packages/mjs not found"; exit 1; }
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-fetch-config
+	@ln -s $(APP_YAML_FETCH_CONFIG_DIR)/packages/mjs $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-fetch-config
 
 .PHONY: dev-install-fastapi
 dev-install-fastapi: ## Create .dev/fastapi venv and install fastapi_server + print-routes-fastapi + fetch-http-client editable
@@ -62,12 +94,30 @@ dev-install-fastapi: ## Create .dev/fastapi venv and install fastapi_server + pr
 	  echo "==> $(PRINT_ROUTES_DIR)/packages/py not found — clone mta-ployglot-server-print-routes alongside this repo"; exit 1; }
 	@test -d $(FETCH_CLIENT_DIR)/packages/py || { \
 	  echo "==> $(FETCH_CLIENT_DIR)/packages/py not found — clone mta-ployglot-pkg-fetch-client into ployglots/"; exit 1; }
+	@test -d $(ENV_RESOLVE_DIR)/packages/py || { \
+	  echo "==> $(ENV_RESOLVE_DIR)/packages/py not found — clone mta-ployglot-pkg-env-resolve into ployglots/"; exit 1; }
+	@test -d $(APP_YAML_LOADER_DIR)/packages/py || { \
+	  echo "==> $(APP_YAML_LOADER_DIR)/packages/py not found — clone mta-ployglot-pkg-app-yaml-loader into ployglots/"; exit 1; }
+	@test -d $(APP_YAML_OVERWRITE_DIR)/packages/engine-py || { \
+	  echo "==> $(APP_YAML_OVERWRITE_DIR)/packages/engine-py not found — clone mta-ployglot-pkg-app-yaml-overwrite into ployglots/"; exit 1; }
+	@test -d $(APP_YAML_OVERWRITE_DIR)/packages/applier-py || { \
+	  echo "==> $(APP_YAML_OVERWRITE_DIR)/packages/applier-py not found — clone mta-ployglot-pkg-app-yaml-overwrite into ployglots/"; exit 1; }
+	@test -d $(APP_YAML_CONFIG_DIR)/packages/py || { \
+	  echo "==> $(APP_YAML_CONFIG_DIR)/packages/py not found — clone mta-ployglot-pkg-app-yaml-config into ployglots/"; exit 1; }
+	@test -d $(APP_YAML_FETCH_CONFIG_DIR)/packages/py || { \
+	  echo "==> $(APP_YAML_FETCH_CONFIG_DIR)/packages/py not found — clone mta-ployglot-pkg-app-yaml-fetch-config into ployglots/"; exit 1; }
 	@mkdir -p $(DEV_FASTAPI)
 	@test -d $(DEV_VENV) || uv venv $(DEV_VENV) --python 3.13
 	uv pip install --python $(DEV_VENV)/bin/python \
 	  -e "$(BOOTSTRAP_DIR)/fastapi_server" \
 	  -e "$(PRINT_ROUTES_DIR)/packages/py" \
-	  -e "$(FETCH_CLIENT_DIR)/packages/py"
+	  -e "$(FETCH_CLIENT_DIR)/packages/py" \
+	  -e "$(ENV_RESOLVE_DIR)/packages/py" \
+	  -e "$(APP_YAML_LOADER_DIR)/packages/py" \
+	  -e "$(APP_YAML_OVERWRITE_DIR)/packages/engine-py" \
+	  -e "$(APP_YAML_OVERWRITE_DIR)/packages/applier-py" \
+	  -e "$(APP_YAML_CONFIG_DIR)/packages/py" \
+	  -e "$(APP_YAML_FETCH_CONFIG_DIR)/packages/py"
 
 .PHONY: dev-install
 dev-install: dev-preflight dev-install-fastify dev-install-fastapi ## Install both dev stages

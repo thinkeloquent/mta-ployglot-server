@@ -22,6 +22,9 @@ include Makefile.vars
 include Makefile.compose
 include Makefile.devmode
 
+# Smoke targets for the app-yaml chain (F01..F06 verification).
+-include Makefile.smoke
+
 # Multi-repo orchestration: per-sibling git ops (status-all, sync-all,
 # branch-all, commit-all, push-all). Reads .dev/workspace.toml.lock.json.
 -include Makefile.orchestrator

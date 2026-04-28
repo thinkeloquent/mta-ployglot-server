@@ -98,6 +98,55 @@ language       = "mixed"
 subtree_prefix = "ployglots/mta-ployglot-pkg-vault"
 default_ref    = "main"
 
+[[entry]]
+name           = "pkg-env-resolve"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-env-resolve.git"
+local_path     = "../mta-ployglot-pkg-env-resolve"
+shell_path     = "ployglots/mta-ployglot-pkg-env-resolve"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-env-resolve"
+default_ref    = "main"
+
+[[entry]]
+name           = "pkg-app-yaml-loader"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-app-yaml-loader.git"
+local_path     = "../mta-ployglot-pkg-app-yaml-loader"
+shell_path     = "ployglots/mta-ployglot-pkg-app-yaml-loader"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-app-yaml-loader"
+default_ref    = "main"
+
+# Single sibling repo exposes BOTH @ployglot/runtime-template-resolver
+# (engine, used by F02) and @ployglot/app-yaml-from-context (applier, used
+# by F04). One entry covers both — do not add a separate
+# pkg-app-yaml-from-context block.
+[[entry]]
+name           = "pkg-runtime-template-resolver"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-app-yaml-overwrite.git"
+local_path     = "../mta-ployglot-pkg-app-yaml-overwrite"
+shell_path     = "ployglots/mta-ployglot-pkg-app-yaml-overwrite"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-app-yaml-overwrite"
+default_ref    = "main"
+
+[[entry]]
+name           = "pkg-app-yaml-config"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-app-yaml-config.git"
+local_path     = "../mta-ployglot-pkg-app-yaml-config"
+shell_path     = "ployglots/mta-ployglot-pkg-app-yaml-config"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-app-yaml-config"
+default_ref    = "main"
+
+[[entry]]
+name           = "pkg-app-yaml-fetch-config"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-app-yaml-fetch-config.git"
+local_path     = "../mta-ployglot-pkg-app-yaml-fetch-config"
+shell_path     = "ployglots/mta-ployglot-pkg-app-yaml-fetch-config"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-app-yaml-fetch-config"
+default_ref    = "main"
+
 # --- tools ---
 
 [[entry]]

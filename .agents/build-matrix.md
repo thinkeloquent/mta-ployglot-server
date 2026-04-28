@@ -36,15 +36,25 @@ Per-language toolchains, lockfile state, and how each app's deps are sourced.
 
 ## Dependency sourcing
 
-Both apps depend on **in-repo + sibling-repo** code, not registry packages, for the bootstrap layer.
+Both apps depend on **in-repo + sibling-repo** code, not registry packages, for the bootstrap and lifecycle layers. Every entry below is reached through a `ployglots/` symlink (laid by `scripts/workspace/bootstrap.sh`) or a parent-relative `../` path, never via a registry.
 
-| Dep                                  | Source                                                                                 | Resolution |
-|--------------------------------------|----------------------------------------------------------------------------------------|------------|
-| `fastify-server` / `thinkeloquent-fastapi-server` | `ployglots/mta-ployglot-server-bootstrap/` (sibling-repo symlink)           | `file:`/`path:` |
-| `@mta/print-routes-fastify` / `print-routes-fastapi` | `../mta-ployglot-server-print-routes/` (sibling)      | `file:`/`path:` |
-| `@polyglot/fetch-http-client` / `polyglot-fetch-http-client` | `../mta-ployglot-pkg-fetch-client/` (sibling) | `file:`/`path:` *(once the active integration work lands)* |
+| Dep family                                                                    | mjs name                              | py name                          | Sibling repo                                  | Lifecycle slot |
+|-------------------------------------------------------------------------------|---------------------------------------|----------------------------------|------------------------------------------------|----------------|
+| Bootstrap (addon orchestrator)                                                | `fastify-server`                      | `thinkeloquent-fastapi-server`   | `mta-ployglot-server-bootstrap`               | n/a (boot)     |
+| Route table printer                                                           | `@mta/print-routes-fastify`           | `print-routes-fastapi`           | `mta-ployglot-server-print-routes`            | n/a (utility)  |
+| Polyglot HTTP client                                                          | `@polyglot/fetch-http-client`         | `polyglot-fetch-http-client`     | `mta-ployglot-pkg-fetch-client`               | 20             |
+| Env resolution (vault → process.env → default)                                | `@org/env-resolve`                    | `env-resolve`                    | `mta-ployglot-pkg-env-resolve`                | 15             |
+| App YAML loader (filesystem → merged tree)                                    | `@ployglot/app-yaml-loader`           | `app-yaml-loader`                | `mta-ployglot-pkg-app-yaml-loader`            | 25             |
+| Runtime template resolver (engine half of overwrite repo)                     | `@ployglot/runtime-template-resolver` | `runtime-template-resolver`      | `mta-ployglot-pkg-app-yaml-overwrite`         | 26             |
+| App YAML config (provider catalog)                                            | `@ployglot/app-yaml-config`           | `app-yaml-config`                | `mta-ployglot-pkg-app-yaml-config`            | 27             |
+| App YAML from-context applier (applier half of overwrite repo)                | `@ployglot/app-yaml-from-context`     | `app-yaml-from-context`          | `mta-ployglot-pkg-app-yaml-overwrite`         | 28             |
+| App YAML fetch-config (intent → endpoint)                                     | `@ployglot/app-yaml-fetch-config`     | `app-yaml-fetch-config`          | `mta-ployglot-pkg-app-yaml-fetch-config`      | 29             |
 
-Implication: this repo is **not** self-contained. A fresh clone needs every sibling repo cloned next to it (under the shared parent dir) so the `ployglots/` symlinks resolve. The root `Makefile` `dev-preflight` target aborts early with a clone hint if any are missing. `make bootstrap` clones any missing siblings and lays the symlinks.
+Plus `mta-ployglot-pkg-vault` in `workspace.toml` for the gates layer (`make vault-check`); not a direct app-manifest dep.
+
+mjs deps are declared in `server/fastify/package.json#dependencies` as `"file:../../ployglots/<sibling>/packages/<lang-suffix>"`; py deps in `server/fastapi/pyproject.toml#tool.uv.sources` as `{ path = "../../ployglots/<sibling>/packages/<lang-suffix>", develop = true }`. The overwrite repo ships both an engine and an applier package, so it appears twice with different package suffixes (`engine-{mjs,py}` and `applier-{mjs,py}`).
+
+Implication: this repo is **not** self-contained. A fresh clone needs every sibling repo cloned next to it (under the shared parent dir) so the `ployglots/` symlinks resolve. The root `Makefile` `dev-preflight` target aborts early with a clone hint if any are missing. `make bootstrap` clones any missing siblings and lays the symlinks. Use `bash scripts/workspace/print-registry.sh` to dump the full registry as a Markdown table.
 
 ## Dev-mode staging (`.dev/`)
 

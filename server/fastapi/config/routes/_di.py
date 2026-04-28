@@ -39,9 +39,88 @@ Test override pattern::
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from fastapi import Request
 
 from fetch_http_client import AsyncClient
+
+# Helper classes live in sibling `_<name>.py` modules under
+# `config/lifecycles/`. The route addon loads files in this directory via a
+# path-based importer that does not establish a deep enough package context
+# for `..lifecycles` to resolve at runtime — relative imports across sibling
+# directories raise "attempted relative import beyond top-level package".
+# `from __future__ import annotations` (above) postpones annotation
+# evaluation, so the names below are only needed at type-check time.
+if TYPE_CHECKING:
+    from ..lifecycles._app_yaml_config import ConfigHandle
+    from ..lifecycles._app_yaml_fetch_config import FetchConfigHandle
+    from ..lifecycles._app_yaml_from_context import ApplierHandle
+    from ..lifecycles._app_yaml_loader import LoaderHandle
+    from ..lifecycles._env_resolve import EnvResolver
+    from ..lifecycles._runtime_template_resolver import ResolverHandle
+
+
+async def get_env_resolve(request: Request) -> EnvResolver:
+    """Depends() provider for the env-resolve helper.
+
+    Raises if the 15_env_resolve lifecycle did not run (e.g. lifecycle file
+    renamed or removed). Routes that need config resolution should add::
+
+        resolver: EnvResolver = Depends(get_env_resolve)
+    """
+    resolver = getattr(request.app.state, "env_resolve", None)
+    if resolver is None:
+        raise RuntimeError(
+            "env_resolve missing — confirm 15_env_resolve.lifecycle.py is loaded"
+        )
+    return resolver
+
+
+async def get_app_yaml_loader(request: Request) -> LoaderHandle:
+    """Depends() provider for the app-yaml-loader handle."""
+    handle = getattr(request.app.state, "app_yaml_loader", None)
+    if handle is None:
+        raise RuntimeError(
+            "app_yaml_loader missing — confirm 25_app_yaml_loader.lifecycle.py is loaded"
+        )
+    return handle
+
+
+async def get_runtime_template_resolver(request: Request) -> ResolverHandle:
+    handle = getattr(request.app.state, "runtime_template_resolver", None)
+    if handle is None:
+        raise RuntimeError(
+            "runtime_template_resolver missing — confirm 26_runtime_template_resolver.lifecycle.py is loaded"
+        )
+    return handle
+
+
+async def get_app_yaml_config(request: Request) -> ConfigHandle:
+    handle = getattr(request.app.state, "app_yaml_config", None)
+    if handle is None:
+        raise RuntimeError(
+            "app_yaml_config missing — confirm 27_app_yaml_config.lifecycle.py is loaded"
+        )
+    return handle
+
+
+async def get_app_yaml_applier(request: Request) -> ApplierHandle:
+    handle = getattr(request.app.state, "app_yaml_applier", None)
+    if handle is None:
+        raise RuntimeError(
+            "app_yaml_applier missing — confirm 28_app_yaml_from_context.lifecycle.py is loaded"
+        )
+    return handle
+
+
+async def get_app_yaml_fetch_config(request: Request) -> FetchConfigHandle:
+    handle = getattr(request.app.state, "app_yaml_fetch_config", None)
+    if handle is None:
+        raise RuntimeError(
+            "app_yaml_fetch_config missing — confirm 29_app_yaml_fetch_config.lifecycle.py is loaded"
+        )
+    return handle
 
 
 async def _get(name: str, request: Request) -> AsyncClient:
