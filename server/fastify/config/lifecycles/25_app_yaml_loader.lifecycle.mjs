@@ -39,9 +39,15 @@ const wrapped = fp(appYamlLoaderPlugin, {
 });
 
 export default async function lifecycle(server, config) {
+  // Resolution order: explicit config arg → APP_YAML_FIXTURES_DIR env (set by
+  // Makefile.devmode for staged dev-mode boots) → walk up from this file to
+  // server/config/. The env override is what makes dev mode work — the staged
+  // file lives under .dev/fastify-app/config/lifecycles/, so the relative walk
+  // alone would land at .dev/config/ (which the rsync does not stage).
   const dir =
     config?.app_yaml?.config_dir ??
-    new URL("../app-yaml/", import.meta.url).pathname;
+    process.env.APP_YAML_FIXTURES_DIR ??
+    new URL("../../../config/", import.meta.url).pathname;
   await server.register(wrapped, { configDir: dir });
   server.log.info({ dir }, "app-yaml-loader decorator registered");
 }

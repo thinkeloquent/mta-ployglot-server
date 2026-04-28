@@ -6,6 +6,23 @@
 # or `make dev-fastapi` for foreground iteration.
 
 # ---------------------------------------------------------------------------
+# Runtime config-fixtures dir, exported into every dev-mode subshell.
+#
+# Lifecycle 25 (`server/{fastify,fastapi}/config/lifecycles/25_app_yaml_loader`)
+# reads APP_YAML_FIXTURES_DIR to locate `server/config/`. The override is
+# required for fastify dev mode: the lifecycle file is rsync-staged into
+# `.dev/fastify-app/`, so `import.meta.url`-relative resolution would land at
+# `.dev/config/` (which is not staged). For fastapi this is parity-only —
+# the runtime executes against the real source tree.
+#
+# Distinct from the Makefile.vars `APP_YAML_CONFIG_DIR` variable, which points
+# at the SDK source clone (`ployglots/mta-ployglot-pkg-app-yaml-config`). Do
+# not unify the names.
+# ---------------------------------------------------------------------------
+
+export APP_YAML_FIXTURES_DIR := $(CURDIR)/server/config
+
+# ---------------------------------------------------------------------------
 # preflight + install
 # ---------------------------------------------------------------------------
 
