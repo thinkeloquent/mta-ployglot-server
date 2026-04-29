@@ -5,6 +5,7 @@
 .idea/
 __pycache__
 node_modules
+examples/**/dist
 
 .env
 .env.local

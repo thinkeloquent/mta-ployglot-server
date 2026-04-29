@@ -1,0 +1,523 @@
+# Server Configuration - DEV Environment
+# Shared static configuration values for Python and MJS server packages
+
+app_env: dev
+
+# =============================================================================
+# Healthz Route Access Control
+# Allowlists for exposing provider/compute values via healthz admin endpoints
+# =============================================================================
+expose_yaml_config_provider:
+  - gemini_openai
+  - localhost_test_case_001
+  - localhost_test_case_002
+  - localhost_test_case_003
+  - openai
+  - openai_embeddings
+  - anthropic
+  - figma
+  - github
+  - jira
+  - confluence
+  - postgres
+  - redis
+  - saucelabs
+  - servicenow
+  - rally
+  - statsig
+  - sonar
+  - akamai
+  - http_proxy_auth
+
+expose_yaml_config_compute_auth:
+  providers:
+    - "anthropic"
+    - "openai"
+    - "openai_embeddings"
+    - "gemini_openai"
+    - "figma"
+    - "github"
+    - "rally"
+    - "statsig"
+    - "sonar"
+    - "localhost_test_case_001"
+    - "localhost_test_case_002"
+  services:
+    - "confluence"
+    - "jira"
+    - "saucelabs"
+    - "servicenow"
+  storages:
+    - "redis"
+    - "postgres"
+
+
+expose_yaml_config_compute:
+  - proxy_url
+
+expose_yaml_config_service:
+  - confluence
+
+expose_yaml_config_storage:
+  - redis
+  - postgres
+  - elasticsearch
+
+# =============================================================================
+# Provider Configuration
+# All external API endpoints must be defined here (no hardcoded fallbacks)
+# =============================================================================
+
+# proxy_url: false: explicitly tells the ProxyDispatcher to disable proxying for this client. It overrides the global settings (where proxy_urls might be defined) and forces a direct connection. This is the correct way to opt-out a specific provider from the global proxy.
+# proxy_url: null (or missing): typically means "no override". In this case, the ProviderClientFactory falls back to the merged network configuration. If the global config has network.proxy_urls set (like in server.dev.yaml), null would result in inheriting that global proxy.
+
+test_providers:
+  localhost_test_case_001:
+    base_url: "https://generativelanguage.googleapis.localhost/v1beta/openai/models"
+    method: "POST"
+    verify_ssl: false          # <-- Set to false to disable SSL
+    follow_redirects: true     # <-- Also configurable
+    body:
+      languageCode: "en-US"
+      summary: "Come in for our spooky Halloween event!"
+    headers:
+      X-App-Name: null
+      X-App-Version: null
+      X-Request-Id: null
+      X-Computed-Token: null
+      # Option 4: Startup tokens (composite function with property access)
+      X-Startup-Token: null
+      X-Startup-Token2: null
+      X-Server-Start: null
+      # Option 5: Request tokens (separate functions sharing context)
+      X-Request-Token: null
+      X-Request-Token2: null
+    overwrite_from_context:
+      headers:
+        X-App-Name: "{{app.name}}"
+        X-App-Version: "{{app.version}}"
+        X-Request-Id: "{{request.headers.x-request-id}}"
+        # Legacy tokens (still supported)
+        X-Computed-Token: "{{fn:compute_localhost_test_case_001_token}}"
+        X-Computed-Token2: "{{fn:compute_localhost_test_case_005_token}}"
+        # =========================================================================
+        # Option 4: Composite Function (STARTUP scope)
+        # Single function returns object, access properties via dot notation
+        # Both use the same timestamp because it's computed once when function runs
+        # See: computed_functions/startup_tokens.compute.py/.mjs
+        # =========================================================================
+        X-Startup-Token: "{{fn:startup_tokens.case_001}}"
+        X-Startup-Token2: "{{fn:startup_tokens.case_005}}"
+        X-Server-Start: "{{fn:startup_tokens.timestamp_iso}}"
+        # =========================================================================
+        # Option 5: Shared Context (REQUEST scope)
+        # Separate functions coordinate via ctx['shared'].get_or_set()
+        # Both use the same timestamp via shared context key
+        # See: computed_functions/request_token_001.compute.py/.mjs
+        # See: computed_functions/request_token_005.compute.py/.mjs
+        # =========================================================================
+        X-Request-Token: "{{fn:request_token_001}}"
+        X-Request-Token2: "{{fn:request_token_005}}"
+
+  localhost_test_case_002:
+    base_url: "https://generativelanguage.googleapis.localhost/v1beta/openai/models"
+    method: "POST"
+    verify_ssl: false          # <-- Set to false to disable SSL
+    follow_redirects: true     # <-- Also configurable
+    body:
+      languageCode: "en-US"
+      summary: "Come in for our spooky Halloween event!"
+    headers:
+      X-App-Name: null
+      X-App-Version: null
+      X-Request-Id: null
+      X-Auth: null
+      Authorization: null      # Computed from test-case-002 (jira provider auth)
+
+    overwrite_from_context:
+      headers:
+        X-App-Name: "{{app.name}}"
+        X-App-Version: "{{app.version}}"
+        X-Request-Id: "{{request.headers.x-request-id}}"
+        # Authorization header computed from test_case_002 context resolver
+        # Uses YamlConfigFactory.computeAll() to get jira provider's auth header
+        # See: fastify_server/src/computed_functions/test-case-002.context.compute.mjs
+        # See: fastapi_server/app/computed_functions/test-case-002.context.compute.py
+        X-Auth: "{{fn:test_case_002_1}}"
+        Authorization: "{{fn:test_case_002}}"
+
+  localhost_test_case_003:
+    base_url: "https://generativelanguage.googleapis.localhost/v1beta/openai/models"
+    method: "POST"
+    verify_ssl: false          # <-- Set to false to disable SSL
+    follow_redirects: true     # <-- Also configurable
+    body:
+      languageCode: "en-US"
+      summary: "Come in for our spooky Halloween event!"
+    headers:
+      X-App-Name: null
+      X-App-Version: null
+      X-Request-Id: null
+      X-Auth: null
+      Authorization: null      # Computed from test-case-002 (jira provider auth)
+
+    overwrite_from_context:
+      headers:
+        X-App-Name: "{{app.name}}"
+        X-App-Version: "{{app.version}}"
+        X-Request-Id: "{{request.headers.x-request-id}}"
+        # Authorization header computed from test_case_002 context resolver
+        # Uses YamlConfigFactory.computeAll() to get jira provider's auth header
+        # See: fastify_server/src/computed_functions/test-case-002.context.compute.mjs
+        # See: fastapi_server/app/computed_functions/test-case-002.context.compute.py
+        X-Auth: "{{fn:test_case_002_1}}"
+        Authorization: "{{fn:test_case_002}}"
+
+providers:
+  gemini_openai:
+    method: "GET"
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai"
+    model: "gemini-2.0-flash"
+    health_endpoint: "/models"
+    endpoint_api_key: null
+    headers:
+      "Content-Type": "application/json"
+    test01: null
+    test02: null
+    test03: null
+    test04: null
+    test05: null
+    test06: null
+    test07: null
+    endpoint_auth_type: "bearer"         # bearer, basic, x-api-key, custom
+    endpoint_auth_token_resolver: "request"        # static (default), startup, request
+    app_name: null
+    app_version: null
+    request_id: null
+    proxy_url: false  # Disabled - no proxy running
+    client:
+      # Override timeout for this provider only
+      timeout_seconds: 120.0
+      timeout_ms: 120000
+    overwrite_from_env:
+      endpoint_api_key: "GEMINI_API_KEY"
+    overwrite_from_context:
+      endpoint_api_key: "{{fn:provider_api_keys.gemini_openai}}"
+      app_name: "{{app.name}}"
+      app_version: "{{app.version}}"
+      request_id: "{{request.headers.x-request-id}}"
+      test01: "{{fn:compute_localhost_test_case_001_token}}"
+      test02: "{{fn:compute_localhost_test_case_005_token}}"
+      test03: "{{fn:startup_tokens.case_001}}"
+      test04: "{{fn:startup_tokens.case_005}}"
+      test05: "{{fn:startup_tokens.timestamp_iso}}"
+      test06: "{{fn:request_token_001}}"
+      test07: "{{fn:request_token_005}}"
+      headers:
+        X-App-Name: "{{app.name}}"
+        X-App-Version: "{{app.version}}"
+        X-App-Lang: "{{env.LANG}}"
+        X-App-Term: "{{env.TERM_PROGRAM}}"
+
+  openai:
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-4"
+    health_endpoint: "/models"
+    endpoint_auth_type: "bearer"
+    endpoint_api_key: null
+    proxy_url: false  # Disabled - no proxy running
+    app_name: null
+    app_version: null
+    request_id: null
+    headers:
+      "Content-Type": "application/json"
+      X-App-Name: null
+      X-App-Version: null
+      X-Request-Id: null
+      X-Computed-Token: null
+      # Option 4: Startup tokens (composite function with property access)
+      X-Startup-Token: null
+      X-Startup-Token2: null
+      X-Server-Start: null
+      # Option 5: Request tokens (separate functions sharing context)
+      X-Request-Token: null
+      X-Request-Token2: null
+
+    overwrite_from_context:
+      endpoint_api_key: "{{fn:provider_api_keys.openai}}"
+      app_name: "{{app.name}}"
+      app_version: "{{app.version}}"
+      request_id: "{{request.headers.x-request-id}}"
+      headers:
+        X-App-Name: "{{app.name}}"
+        X-App-Version: "{{app.version}}"
+        X-Request-Id: "{{request.headers.x-request-id}}"
+        # Legacy tokens (still supported)
+        X-Computed-Token: "{{fn:compute_localhost_test_case_001_token}}"
+        X-Computed-Token2: "{{fn:compute_localhost_test_case_005_token}}"
+        # =========================================================================
+        # Option 4: Composite Function (STARTUP scope)
+        # Single function returns object, access properties via dot notation
+        # Both use the same timestamp because it's computed once when function runs
+        # See: computed_functions/startup_tokens.compute.py/.mjs
+        # =========================================================================
+        X-Startup-Token: "{{fn:startup_tokens.case_001}}"
+        X-Startup-Token2: "{{fn:startup_tokens.case_005}}"
+        X-Server-Start: "{{fn:startup_tokens.timestamp_iso}}"
+        # =========================================================================
+        # Option 5: Shared Context (REQUEST scope)
+        # Separate functions coordinate via ctx['shared'].get_or_set()
+        # Both use the same timestamp via shared context key
+        # See: computed_functions/request_token_001.compute.py/.mjs
+        # See: computed_functions/request_token_005.compute.py/.mjs
+        # =========================================================================
+        X-Request-Token: "{{fn:request_token_001}}"
+        X-Request-Token2: "{{fn:request_token_005}}"
+
+
+  anthropic:
+    base_url: "https://api.anthropic.com/v1"
+    model: "claude-3-sonnet"
+    health_endpoint: "/models"
+    endpoint_auth_type: "x-api-key"       # Anthropic uses x-api-key header
+    endpoint_auth_token_resolver: "static"
+    endpoint_api_key: null
+    proxy_url: false  # Disabled - no proxy running
+    headers:
+      anthropic-version: "2023-06-01"
+      content-type: "application/json"
+    overwrite_from_context:
+      endpoint_api_key: "{{fn:provider_api_keys.anthropic}}"
+      
+
+  openai_embeddings:
+    base_url: "https://api.openai.com/v1"
+    health_endpoint: "/embeddings"
+    method: "POST"
+    model: "text-embedding-3-small"
+    health_body:
+      input: "Hello, this is a connection test."
+      model: "text-embedding-3-small"
+    endpoint_auth_type: "bearer"
+    endpoint_api_key: null
+    organization: null
+    proxy_url: false  # false = disabled, null = inherit global, string = use it
+    verify_ssl: true  # set to false in cloud config to bypass self-signed cert errors
+    client:
+      timeout_seconds: 120.0
+    overwrite_from_context:
+      endpoint_api_key: "{{fn:provider_api_keys.openai_embeddings}}"
+
+  figma:
+    base_url: "https://api.figma.com/v1"
+    health_endpoint: "/me"
+    endpoint_auth_type: "custom"             # Figma uses custom X-Figma-Token header
+    api_auth_header_name: "X-Figma-Token"    # Required for dynamic resolution of custom auth
+    endpoint_auth_token_resolver: "startup"
+    endpoint_api_key: null
+    proxy_url: false  # Disabled - no proxy running
+    headers:
+      Accept: "application/json"
+    overwrite_from_context:
+      endpoint_api_key: "{{fn:provider_api_keys.figma}}"
+      # proxy_url: "https://api.localhost.com"
+      # proxy_url: "{{env.FIGMA_PROXY_URL}}"  # Disabled — when FIGMA_PROXY_URL unset, resolves to null and overrides proxy_url:false
+
+    
+  github:
+    base_url: "https://api.github.com"
+    health_endpoint: "/user"
+    endpoint_api_key: null
+    endpoint_auth_type: "bearer"
+    endpoint_auth_token_resolver: "static"
+    proxy_url: false  # Disabled - no proxy running
+    headers:
+      Accept: "application/vnd.github+json"
+      X-GitHub-Api-Version: "2022-11-28"
+      User-Agent: "MTA-FetchClient"
+    overwrite_from_context:
+      endpoint_api_key: "{{fn:provider_api_keys.github}}"
+      # base_url: "{{env.GITHUB_API_BASE_URL}}"  # Disabled — when GITHUB_API_BASE_URL unset, resolves to null and overrides base_url default
+
+  jira:
+    base_url: null
+    email: null
+    health_endpoint: "/rest/api/3/myself"        # Jira v3 REST API endpoint
+    endpoint_auth_type: "basic_email_token"         # Jira Cloud uses Basic auth with email:token
+    endpoint_auth_token_resolver: "static"
+    proxy_url: false  # Disabled - no proxy running
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+    overwrite_from_context:
+      base_url: "{{env.JIRA_BASE_URL}}"
+      email: "{{env.JIRA_EMAIL}}"
+      endpoint_api_key: "{{fn:provider_api_keys.jira}}"
+
+  confluence:
+    base_url: null
+    email: null
+    parent_page_id: null
+    space_key: null
+    endpoint_api_key: null
+    health_endpoint: "/wiki/rest/api/space?limit=1"    # Confluence Cloud REST API
+    endpoint_auth_type: "basic_email_token"         # Confluence Cloud uses Basic auth with email:token
+    endpoint_auth_token_resolver: "static"
+    proxy_url: false  # Disabled - no proxy running
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+      X-Atlassian-Token: "no-check"  # Required for write operations (CSRF protection)
+    overwrite_from_context:
+      base_url: "{{env.CONFLUENCE_BASE_URL}}"
+      email: "{{env.CONFLUENCE_EMAIL}}"
+      endpoint_api_key: "{{fn:provider_api_keys.confluence}}"
+
+  saucelabs:
+    base_url: "https://api.us-west-1.saucelabs.com"
+    username: null
+    endpoint_api_key: null
+    health_endpoint: "/rest/v1/users/:username"
+    endpoint_auth_type: "basic"           # SauceLabs uses Basic auth with username:access_key
+    endpoint_auth_token_resolver: "static"
+    proxy_url: false  # Disabled - no proxy running
+    overwrite_from_context:
+      username: "{{env.SAUCE_USERNAME}}"
+      endpoint_api_key: "{{fn:provider_api_keys.saucelabs}}"
+
+  # ServiceNow
+  servicenow:
+    base_url: "https://dev12345.service-now.com" # Example instance
+    health_endpoint: "/api/now/table/sys_user?sysparm_limit=1"
+    username: null
+    endpoint_api_key: null
+    endpoint_auth_type: "basic"
+    endpoint_auth_token_resolver: "static"
+    proxy_url: null  # Disabled - no proxy running
+    overwrite_from_context:
+      base_url: "{{env.SERVICENOW_BASE_URL}}"
+      username: "{{env.SERVICENOW_USERNAME}}"
+      endpoint_api_key: "{{fn:provider_api_keys.servicenow}}"
+
+  # Rally (Broadcom)
+  rally:
+    base_url: "https://rally1.rallydev.com"
+    health_endpoint: "/slm/webservice/v2.0/subscription"
+    endpoint_api_key: null
+    endpoint_auth_type: "custom_header"
+    api_auth_header_name: "ZSESSIONID"
+    proxy_url: 'http://proxy.rally.local:8080'  # Disabled - no proxy running
+    headers:
+      ZSESSIONID: null
+    overwrite_from_context:
+      endpoint_api_key: "{{fn:provider_api_keys.rally}}"
+      headers:
+        ZSESSIONID: "{{fn:provider_api_keys.rally}}"
+
+  statsig:
+    base_url: "https://statsigapi.net/console/v1"
+    health_endpoint: "/gates"
+    endpoint_api_key: null
+    endpoint_auth_type: "custom_header"
+    api_auth_header_name: "statsig-api-key"
+    proxy_url: false  # Disabled - no proxy running
+    overwrite_from_context:
+      endpoint_api_key: "{{fn:provider_api_keys.statsig}}"
+
+  sonar:
+    base_url: "https://sonarcloud.io"  # or https://your-sonar.example.com for SonarQube
+    endpoint_api_key: null
+    health_endpoint: "/api/authentication/validate"
+    endpoint_auth_type: "bearer"
+    endpoint_auth_token_resolver: "static"
+    proxy_url: false  # Disabled - no proxy running
+    overwrite_from_context:
+      endpoint_api_key: "{{fn:provider_api_keys.sonar}}"
+
+  # Akamai Edge API (EdgeGrid authentication)
+  akamai:
+    base_url: null  # Set via AKAMAI_HOST or .edgerc file
+    client_token: null
+    client_secret: null
+    access_token: null
+    host: null
+    health_endpoint: "/-/client-api/active-grants/implicit"
+    endpoint_auth_type: "edgegrid"  # Akamai EdgeGrid signature-based auth
+    endpoint_auth_token_resolver: "static"
+    proxy_url: false  # Disabled - no proxy running
+
+  http_proxy_auth:
+    _type: compute
+    description: "Computed HTTP proxy authentication credentials"
+    overwrite_from_context:
+      example_auto_loaded: "{{fn:example_auto_loaded}}"
+
+# =============================================================================
+# Proxy Configuration
+# =============================================================================
+global:
+  client:
+    # Timeout values in seconds (Python) / milliseconds (MJS)
+    timeout_seconds: 60.0
+    timeout_ms: 60000
+    # Keep-alive timeout
+    keep_alive_timeout_seconds: 5.0
+    keep_alive_timeout_ms: 5000
+    # Connection pool
+    max_connections: 10
+
+  display:
+    separator_char: "="
+    thin_separator_char: "-"
+    separator_length: 60
+
+  network:
+    default_environment: 'dev'
+    proxy_urls:
+      local: ''
+      dev: 'http://proxy.dev.local:8080'
+      qa: 'http://proxy.qa.local:8080'
+      prod: 'http://proxy.prod.local:8080'
+    ca_bundle: null
+    cert: null
+    cert_verify: true
+    agent_proxy:
+      http_proxy: 'http://proxy.dev.local:8080'
+      https_proxy: 'http://proxy.dev.local:8080'
+
+# =============================================================================
+# Storage Providers Configuration
+# =============================================================================
+# Full connection details for storage services (Redis, PostgreSQL).
+# Used by db_connection_* packages via from_static_config() pattern.
+# Environment variables can override individual values.
+
+storage:
+  s3:
+    endpoint_url: null
+    region_name: null
+    access_key_id: null
+    secret_access_key: null
+    bucket_name: null
+    force_path_style: false
+    proxy_url: null
+    verify_ssl: null
+  redis:
+      # Vendor types: on-prem | elastic-cloud | elastic-transport | digital-ocean
+      vendor_type: null  # Auto-detected from cloud_id or port
+      host: null
+      port: null
+      db: null
+      username: null
+      password: null
+      use_ssl: null
+      ssl_cert_reqs: null  # "none" | "optional" | "required" — maps to kwargs["ssl_cert_reqs"]
+      url: null            # redis:// or rediss:// — overrides host/port/db/password
+
+  postgres:
+      # Vendor types: on-prem | elastic-cloud | elastic-transport | digital-ocean
+      vendor_type: null  # Auto-detected from cloud_id or port
+
+  elasticsearch:
+      # Vendor types: on-prem | elastic-cloud | elastic-transport | digital-ocean
+      vendor_type: null  # Auto-detected from cloud_id or port

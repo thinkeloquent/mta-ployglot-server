@@ -22,12 +22,16 @@ async function fetchConfigPlugin(fastify, _opts) {
   const merged = await fastify.app_yaml_applier(fastify.app_yaml_config.getAll());
   loadConfig(merged);
 
+  // SDK gets the endpoint.dev.yaml path so refreshConfig() can re-read on demand
+  // (slot 36 routes call sdk.refreshConfig()). Path source: APP_YAML_FIXTURES_DIR.
+  const fixturesDir = process.env.APP_YAML_FIXTURES_DIR;
+  const endpointFile = fixturesDir ? `${fixturesDir}/endpoint.dev.yaml` : null;
   const handle = {
     get_fetch_config: (intent, payload) => getFetchConfig(intent, payload ?? {}),
     list_endpoints: () => listEndpoints(),
     get_endpoint: (name) => getEndpoint(name),
     resolve_intent: (intent) => resolveIntent(intent),
-    sdk: new EndpointConfigSDK(),
+    sdk: new EndpointConfigSDK({ filePath: endpointFile }),
   };
 
   fastify.decorate("app_yaml_fetch_config", handle);

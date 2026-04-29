@@ -1,5 +1,5 @@
 import fp from "fastify-plugin";
-import { createResolver } from "@ployglot/runtime-template-resolver";
+import { createResolver, MissingStrategy } from "@ployglot/runtime-template-resolver";
 
 async function resolverPlugin(fastify, _opts) {
   if (!fastify.envResolve) {
@@ -7,7 +7,17 @@ async function resolverPlugin(fastify, _opts) {
       "envResolve missing — confirm 15_env_resolve.lifecycle.mjs is loaded before 26_runtime_template_resolver"
     );
   }
-  const resolver = createResolver();
+  if (!fastify.compute_registry) {
+    throw new Error(
+      "compute_registry missing — confirm 24_compute_functions.lifecycle.mjs runs before 26_runtime_template_resolver"
+    );
+  }
+  // IGNORE so unmatched {{app.X}} / {{request.X}} refs (no context at boot) become
+  // literal strings rather than aborting. {{fn:…}} refs resolve via the registry.
+  const resolver = createResolver({
+    registry: fastify.compute_registry,
+    missingStrategy: MissingStrategy.IGNORE,
+  });
 
   fastify.decorate("runtime_template_resolver", resolver);
   fastify.decorateRequest("runtime_template_resolver", null);
@@ -19,7 +29,7 @@ async function resolverPlugin(fastify, _opts) {
 const wrapped = fp(resolverPlugin, {
   name: "runtime-template-resolver",
   fastify: ">=4",
-  dependencies: ["env-resolve"],
+  dependencies: ["env-resolve", "compute-functions"],
 });
 
 export default async function lifecycle(server, _config) {
