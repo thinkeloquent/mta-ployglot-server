@@ -11,10 +11,10 @@ function makeHandle(boundConfigDir) {
   return {
     load_from_config_dir: (configDir, opts = {}) =>
       loadFromConfigDir({
+        ...opts,
         configDir: configDir ?? boundConfigDir,
-        missing: opts.missing,
       }),
-    load_files: (paths) => loadFiles(paths),
+    load_files: (paths, opts = {}) => loadFiles(paths, opts),
     resolve_config_dir: () => resolveConfigDir(boundConfigDir),
     clear_cache: () => clearCache(),
     config_dir: boundConfigDir,

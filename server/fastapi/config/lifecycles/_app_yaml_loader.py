@@ -30,14 +30,31 @@ class LoaderHandle:
         config_dir: str | None = None,
         *,
         missing: Literal["raise", "skip"] = "raise",
+        base_files: list[str] | tuple[str, ...] | None = None,
+        env_suffixes: list[str] | tuple[str, ...] | None = None,
+        app_env: str | None = None,
+        force: bool = False,
+        logger=None,
     ) -> dict[str, Any]:
         return load_from_config_dir(
             config_dir=config_dir or self.config_dir,
             missing=missing,
+            base_files=base_files,
+            env_suffixes=env_suffixes,
+            app_env=app_env,
+            force=force,
+            logger=logger,
         )
 
-    def load_files(self, paths: list[str]) -> dict[str, Any]:
-        return load_files(paths)
+    def load_files(
+        self,
+        paths: list[str],
+        *,
+        missing: Literal["raise", "skip"] = "raise",
+        force: bool = False,
+        logger=None,
+    ) -> dict[str, Any]:
+        return load_files(paths, missing=missing, force=force, logger=logger)
 
     def resolve_config_dir(self) -> str:
         return resolve_config_dir(self.config_dir)
