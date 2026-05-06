@@ -1,0 +1,33 @@
+# Makefile.symlinks — symlink topology health, wraps scripts/workspace/doctor.sh.
+#
+# Targets:
+#   doctor          run all diagnostics, hide passing info-level checks
+#   doctor-json     same, but emit one JSON object per check (for CI dashboards)
+#   doctor-fix      apply auto-fixers; refuses to mutate without CONFIRM=1
+#   symlinks-clean  remove orphaned symlinks under ployglots/ (irreversible)
+
+DOCTOR ?= bash $(ROOT_DIR)/scripts/workspace/doctor.sh
+
+.PHONY: doctor doctor-json doctor-fix symlinks-clean
+
+doctor: ## Run symlink/topology diagnostics; non-zero on error-severity findings
+	@$(DOCTOR)
+
+doctor-json: ## Same as doctor, JSON output (one record per line, parseable by jq)
+	@$(DOCTOR) --json
+
+doctor-fix: ## Apply auto-fixers (preview unless CONFIRM=1)
+	@if [ "$(CONFIRM)" != "1" ]; then \
+	  echo "==> dry-run; pass CONFIRM=1 to apply fixes"; \
+	  $(DOCTOR) --verbose; \
+	else \
+	  $(DOCTOR) --fix; \
+	fi
+
+symlinks-clean: ## Remove orphaned symlinks under ployglots/ (CONFIRM=1 to apply)
+	@if [ "$(CONFIRM)" != "1" ]; then \
+	  echo "==> dry-run; pass CONFIRM=1 to actually delete:"; \
+	  find $(ROOT_DIR)/ployglots -maxdepth 3 -type l ! -exec test -e {} \; -print 2>/dev/null || true; \
+	else \
+	  find $(ROOT_DIR)/ployglots -maxdepth 3 -type l ! -exec test -e {} \; -print -delete 2>/dev/null || true; \
+	fi

@@ -1,0 +1,96 @@
+{
+  "schema": "ployglot-agentmd-usages-apps/v1",
+  "generated_at": "2026-04-28T03:00:00Z",
+  "repo": "mta-ployglot-server",
+  "kind": "polyglot-apps-monorepo",
+  "layout": "flat-under-server",
+  "languages": ["mjs", "py"],
+  "packages": [
+    {
+      "key": "mta-fastify-server",
+      "kind": "app",
+      "language": "mjs",
+      "path": "server/fastify",
+      "agent_md": "server/fastify/.agent.md",
+      "publishable": false,
+      "run": "make dev-fastify",
+      "twin_of": { "key": "mta-fastapi-server", "language": "py" },
+      "stale": true,
+      "stale_reason": "Integration section under-enumerates app-yaml chain siblings; extension contract still current"
+    },
+    {
+      "key": "mta-fastapi-server",
+      "kind": "app",
+      "language": "py",
+      "path": "server/fastapi",
+      "agent_md": "server/fastapi/.agent.md",
+      "publishable": false,
+      "run": "make dev-fastapi",
+      "twin_of": { "key": "mta-fastify-server", "language": "mjs" },
+      "stale": true,
+      "stale_reason": "Integration section under-enumerates app-yaml chain siblings; extension contract still current"
+    }
+  ],
+  "unclassified": [
+    {
+      "path": "ployglots/mta-ployglot-server-bootstrap",
+      "reason": "sibling-repo symlink → ../../mta-ployglot-server-bootstrap (read-only, upstream-owned, has its own .agent.md). No .gitmodules; symlink topology is laid by scripts/workspace/bootstrap.sh."
+    },
+    {
+      "path": "playwright-tests",
+      "reason": "e2e harness, not a package"
+    },
+    {
+      "path": "packages/orchestrator",
+      "reason": "Makefile-only, no manifest. Ships the canonical 8-target package CI surface (help install ci-install lint test build clean ci) wrapping subtree-lint + bats + emitter idempotency + doctor."
+    },
+    {
+      "path": "server/parity",
+      "reason": "internal-dev-harness (mta-server-parity, private:true) — runs both runtimes side-by-side and diffs output, not an app or library"
+    }
+  ],
+  "stale_files": [
+    "server/fastify/.agent.md",
+    "server/fastapi/.agent.md"
+  ],
+  "external_siblings": [
+    {
+      "path": "../mta-ployglot-server-bootstrap",
+      "consumed_via": "ployglots/mta-ployglot-server-bootstrap symlink → fastify_server (file: dep) and fastapi_server (path dep, develop=true)",
+      "has_own_agent_md": true
+    },
+    {
+      "path": "../mta-ployglot-server-print-routes",
+      "consumed_via": "file:/path: dep from both apps (../../../...)"
+    },
+    {
+      "path": "../mta-ployglot-pkg-fetch-client",
+      "consumed_via": "file:/path: dep from both apps via ployglots/mta-ployglot-pkg-fetch-client/packages/{ts,py}",
+      "has_own_agent_md": true
+    },
+    {
+      "path": "../mta-ployglot-pkg-env-resolve",
+      "consumed_via": "file:/path: dep from both apps via ployglots/mta-ployglot-pkg-env-resolve/packages/{ts,py}; lifecycle slot 15"
+    },
+    {
+      "path": "../mta-ployglot-pkg-app-yaml-loader",
+      "consumed_via": "file:/path: dep from both apps via ployglots/mta-ployglot-pkg-app-yaml-loader/packages/{mjs,py}; lifecycle slot 25"
+    },
+    {
+      "path": "../mta-ployglot-pkg-app-yaml-overwrite",
+      "consumed_via": "file:/path: dep from both apps via ployglots/mta-ployglot-pkg-app-yaml-overwrite/packages/{engine-mjs|engine-py, applier-mjs|applier-py}; lifecycle slots 26 (engine) + 28 (applier)"
+    },
+    {
+      "path": "../mta-ployglot-pkg-app-yaml-config",
+      "consumed_via": "file:/path: dep from both apps via ployglots/mta-ployglot-pkg-app-yaml-config/packages/{mjs,py}; lifecycle slot 27"
+    },
+    {
+      "path": "../mta-ployglot-pkg-app-yaml-fetch-config",
+      "consumed_via": "file:/path: dep from both apps via ployglots/mta-ployglot-pkg-app-yaml-fetch-config/packages/{mjs,py}; lifecycle slot 29"
+    },
+    {
+      "path": "../mta-ployglot-pkg-vault",
+      "consumed_via": "registered in workspace.toml; consumed by the gates layer (vault-check) and bootstrap; not a direct app-manifest dep"
+    }
+  ]
+}

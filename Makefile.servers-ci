@@ -1,0 +1,53 @@
+# Makefile.servers-ci — orchestrates the 4-step server CI pipeline.
+#
+# This fragment exposes each step of the server-stack CI as its own target so
+# they can be invoked individually (e.g. for re-running just parity), plus an
+# aggregate `ci-servers` that runs them in order:
+#
+#   1. ci-fetch-client      — build the fetch-client TS dist (consumed via
+#                             file: by Fastify)
+#   2. ci-bootstrap-fastify — install + build the fastify_server bootstrap
+#                             dist (consumed via file: by server/fastify)
+#   3. ci-server-fastify    — per-server CI under server/fastify (Makefile.ci)
+#      ci-server-fastapi    — per-server CI under server/fastapi (Makefile.ci)
+#   4. ci-parity            — cross-server parity (server/parity)
+#
+# Sibling paths resolve through the `ployglots/<name>` symlinks created by
+# `init-clone`, which point at sibling checkouts cloned next to this repo
+# (i.e. `../<name>` relative to this repo's root). Override the entry
+# directories at invocation if your siblings live elsewhere, e.g.:
+#   make ci-fetch-client FETCH_CLIENT_TS_DIR=/abs/path/packages/ts
+
+FETCH_CLIENT_TS_DIR  ?= $(ROOT_DIR)/ployglots/mta-ployglot-pkg-fetch-client/packages/ts
+BOOTSTRAP_FASTIFY_DIR ?= $(ROOT_DIR)/ployglots/mta-ployglot-server-bootstrap/fastify_server
+
+.PHONY: ci-fetch-client ci-bootstrap-fastify
+.PHONY: ci-server-fastify ci-server-fastapi ci-parity
+.PHONY: ci-servers
+
+ci-fetch-client: ## (servers) Step 1 — build fetch-client TS dist (ci-install + build)
+	@if [ ! -d "$(FETCH_CLIENT_TS_DIR)" ]; then \
+	  echo "FAIL: fetch-client TS dir missing: $(FETCH_CLIENT_TS_DIR)"; \
+	  echo "      hint: run 'make init-clone' to hydrate siblings"; \
+	  exit 1; \
+	fi
+	$(MAKE) -C $(FETCH_CLIENT_TS_DIR) ci-install build
+
+ci-bootstrap-fastify: ## (servers) Step 2 — install + build fastify_server bootstrap dist
+	@if [ ! -d "$(BOOTSTRAP_FASTIFY_DIR)" ]; then \
+	  echo "FAIL: fastify_server bootstrap dir missing: $(BOOTSTRAP_FASTIFY_DIR)"; \
+	  echo "      hint: run 'make init-clone' to hydrate siblings"; \
+	  exit 1; \
+	fi
+	cd $(BOOTSTRAP_FASTIFY_DIR) && npm install && npm run build
+
+ci-server-fastify: ## (servers) Step 3a — per-server CI for server/fastify (Makefile.ci)
+	$(MAKE) -C $(SERVER_FASTIFY) -f Makefile.ci ci
+
+ci-server-fastapi: ## (servers) Step 3b — per-server CI for server/fastapi (Makefile.ci)
+	$(MAKE) -C $(SERVER_FASTAPI) -f Makefile.ci ci
+
+ci-parity: ## (servers) Step 4 — cross-server parity (server/parity)
+	$(MAKE) -C $(ROOT_DIR)/server/parity ci
+
+ci-servers: ci-fetch-client ci-bootstrap-fastify ci-server-fastify ci-server-fastapi ci-parity ## (servers) Full server-stack CI: deps → per-server → parity

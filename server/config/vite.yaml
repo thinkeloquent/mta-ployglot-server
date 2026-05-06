@@ -1,0 +1,23 @@
+# ─── Vite Frontend Environment Defaults ─────────────────────────────────
+#
+# Default environment variables injected into all frontend apps at build time
+# via Vite's `define` option.
+#
+# Resolution order (per key):
+#   1. Actual process.env.VITE_* value (set by CI, .env, shell)
+#   2. Value from this file (default_envs section)
+#
+# Usage in vite.config.ts:
+#   import { loadViteEnvDefaults } from '../../common/config/vite-env-defaults.mjs';
+#   export default defineConfig({ define: loadViteEnvDefaults() });
+#
+# Usage in frontend code:
+#   import.meta.env.VITE_GITHUB_BASE_URL  // resolves at build time
+#
+# For private GitHub Enterprise instances, set VITE_GITHUB_BASE_URL and
+# VITE_GITHUB_API_BASE_URL in the environment to override these defaults.
+# ─────────────────────────────────────────────────────────────────────────
+
+default_envs:
+  VITE_GITHUB_BASE_URL: "https://github.com"
+  VITE_GITHUB_API_BASE_URL: "https://api.github.com"

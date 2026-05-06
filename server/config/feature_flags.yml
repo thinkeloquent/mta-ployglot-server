@@ -1,0 +1,48 @@
+# ---------------------------------------------------------------------------
+# Feature Flags & Feature Options — static YAML-based configuration
+# ---------------------------------------------------------------------------
+# Loaded at server startup via AppYamlConfig. Accessible from:
+#   - Backend:  config.getNested(['feature_flags', ...]) / config.getNested(['feature_options', ...])
+#   - Frontend: GET /~/api/feature-flags  (includes both flags and options)
+#
+# feature_flags  — boolean toggles (enabled/disabled)
+# feature_options — runtime configuration values per feature
+#
+# Convention:
+#   feature_flags:
+#     <app_name>:
+#       <flag_name>:
+#         enabled: true|false
+#         description: "Human-readable explanation"
+#
+#   feature_options:
+#     <app_name>:
+#       <feature_area>:
+#         <option_key>: <value>
+
+feature_flags:
+
+  figma_component_inspector:
+    image_cache:
+      enabled: false
+      description: >
+        When enabled, Figma node preview images are cached in S3
+        (bucket: figma-component-inspector). When disabled, images are
+        fetched directly from the Figma API on every request (no S3).
+
+feature_options:
+
+  figma_component_inspector:
+    image:
+      # How the frontend renders Figma node preview images.
+      #   blob         — fetch binary, create blob URL (default, works offline-ish)
+      #   base64       — fetch binary, encode as data:image URI (self-contained, no revoke needed)
+      #   content-type — use image URL directly as <img src> (browser HTTP cache, best performance)
+      image_rendering_type: content-type
+
+      # Browser cache control for image responses (Cache-Control header).
+      #   max_age:   seconds the browser may cache before revalidating (0 = no-store)
+      #   immutable: if true, appends "immutable" — browser never revalidates until max_age expires
+      cache_control:
+        max_age: 3600
+        immutable: false

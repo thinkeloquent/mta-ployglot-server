@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "mta-fastapi-server"
+version = "0.0.0"
+description = "Standalone fastapi server that extends thinkeloquent-fastapi-server from the mta-ployglot-server-bootstrap submodule."
+authors = ["Think Eloquent"]
+license = "MIT"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.11.4,<3.12"
+thinkeloquent-fastapi-server = { path = "../../ployglots/mta-ployglot-server-bootstrap/fastapi_server", develop = true }
+print-routes-fastapi = { path = "../../../mta-ployglot-server-print-routes/packages/py", develop = true }
+polyglot-fetch-http-client = { path = "../../ployglots/mta-ployglot-pkg-fetch-client/packages/py", develop = true }
+env-resolve = { path = "../../ployglots/mta-ployglot-pkg-env-resolve/packages/py", develop = true }
+app-yaml-loader = { path = "../../ployglots/mta-ployglot-pkg-app-yaml-loader/packages/py", develop = true }
+runtime-template-resolver = { path = "../../ployglots/mta-ployglot-pkg-app-yaml-overwrite/packages/engine-py", develop = true }
+app-yaml-from-context = { path = "../../ployglots/mta-ployglot-pkg-app-yaml-overwrite/packages/applier-py", develop = true }
+app-yaml-config = { path = "../../ployglots/mta-ployglot-pkg-app-yaml-config/packages/py", develop = true }
+app-yaml-fetch-config = { path = "../../ployglots/mta-ployglot-pkg-app-yaml-fetch-config/packages/py", develop = true }
+uvicorn = { extras = ["standard"], version = ">=0.30" }
+
+[tool.poetry.group.dev.dependencies]
+watchfiles = ">=0.24"
+
+[build-system]
+requires = ["poetry-core>=1.8"]
+build-backend = "poetry.core.masonry.api"

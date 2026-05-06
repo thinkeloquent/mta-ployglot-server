@@ -1,0 +1,54 @@
+# server/fastify — CI Makefile (plan: app-yaml-introspect-routes)
+#
+# Installed alongside the existing dev-orchestration Makefile and Makefile.ci
+# as a plan-specific CI entry point. Run via:
+#   make -C server/fastify -f Makefile.introspect-ci ci
+
+SHELL          := /bin/bash
+.SHELLFLAGS    := -eu -o pipefail -c
+.DEFAULT_GOAL  := help
+
+PKG_DIR        := $(abspath $(CURDIR))
+NPM            := npm
+NODE           := node
+
+.PHONY: help
+help: ## Show available targets
+	@awk 'BEGIN{FS=":.*##"; printf "\nTargets:\n"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+.PHONY: print-env
+print-env: ## Print tool versions
+	@echo "pkg-dir : $(PKG_DIR)"
+	@$(NODE) --version
+	@$(NPM) --version
+
+.PHONY: install
+install: ## Install (mutable lockfile)
+	@$(NPM) install
+
+.PHONY: ci-install
+ci-install: ## Deterministic install for CI
+	@$(NPM) ci
+
+.PHONY: lint
+lint: ## Static checks (noop if no lint script)
+	@if $(NPM) run | grep -q '^  lint$$'; then $(NPM) run lint; else echo "no lint script"; fi
+
+.PHONY: test
+test: ## Run vitest
+	@$(NPM) test
+
+.PHONY: build
+build: ## No build step (ESM source); placeholder for parity
+	@mkdir -p dist && echo '{"runtime":"fastify","kind":"esm-source"}' > dist/manifest.json
+
+.PHONY: clean
+clean: ## Remove dist
+	@rm -rf dist
+
+.PHONY: distclean
+distclean: clean ## Also remove node_modules
+	@rm -rf node_modules
+
+.PHONY: ci
+ci: ci-install lint test build ## Full CI pipeline

@@ -1,0 +1,28 @@
+# Makefile.smoke — end-to-end smoke targets for the app-yaml chain.
+#
+# Each target proves one slice of the chain works:
+#   - smoke-loader     : F01 wired (LoaderHandle reads fixture YAML)
+#   - smoke-resolver   : F02 wired (ResolverHandle resolves {{env.VAR}})
+#   - smoke-app-yaml   : F06 end-to-end (compose + healthz route on both runtimes)
+
+.PHONY: smoke-loader
+smoke-loader: ## Smoke: load fixture YAML through LoaderHandle (F01 verification)
+	@$(DEV_VENV)/bin/python scripts/smoke/loader.py
+
+.PHONY: smoke-resolver
+smoke-resolver: ## Smoke: ResolverHandle resolves {{env.PORT}} (F02 verification)
+	@$(DEV_VENV)/bin/python scripts/smoke/resolver.py
+
+.PHONY: smoke-app-yaml
+smoke-app-yaml: ## Smoke: end-to-end app-yaml chain on both runtimes (F06 verification)
+	@$(MAKE) dev
+	@for port in $(FASTIFY_PORT) $(FASTAPI_PORT); do \
+	  for i in 1 2 3 4 5 6 7 8 9 10; do \
+	    curl -fsS "http://127.0.0.1:$$port/healthz" >/dev/null && break || sleep 1; \
+	  done; \
+	  body=$$(curl -fsS "http://127.0.0.1:$$port/healthz/app-yaml/llm001"); \
+	  echo "==> port $$port: $$body"; \
+	  echo "$$body" | grep -q '"ok": *true' || { echo "smoke failed on $$port"; $(MAKE) dev-stop; exit 1; }; \
+	done
+	@$(MAKE) dev-stop
+	@echo "==> smoke-app-yaml: PASS"

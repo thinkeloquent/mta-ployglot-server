@@ -1,0 +1,173 @@
+name: Release (merge + subtree assemble)
+
+# Manual workflow — operator-triggered from the Actions UI.
+#
+#   1. Merge $source (default: main) into $target (default: release/main).
+#      Creates $target from $source on first run.
+#   2. For every entry in workspace.toml, run `git subtree add|pull --squash
+#      --prefix=<subtree_prefix>` so the release branch is a self-contained
+#      tree of every sibling at its current HEAD SHA.
+#   3. Push the assembled release branch back to origin.
+#
+# Replaces the previous push/PR-driven release-preflight + release-assemble
+# pair. Gates that used to run as preflight (vault-check, twin-diff, etc.) can
+# still be invoked locally via `make pre-push`.
+#
+# To run: Actions → "Release (merge + subtree assemble)" → Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source branch to merge from'
+        required: true
+        default: 'main'
+      target:
+        description: 'Release branch to assemble onto (created from source if missing)'
+        required: true
+        default: 'release/main'
+
+permissions:
+  contents: write   # push the merge + subtree commits to the release branch
+
+# Serialize same-target assemblies (don't kill in flight). Different release
+# targets run in parallel.
+concurrency:
+  group: release-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SOURCE_REF: ${{ inputs.source }}
+      RELEASE_REF: ${{ inputs.target }}
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Skip submodules: .claude is a private repo of dev-only Claude
+          # Code agent files; the build does not use it.
+          submodules: false
+          # GH_RELEASE_TOKEN is a fine-grained PAT with `contents: read` on
+          # every workspace.toml sibling and `contents: write` on this repo.
+          # GITHUB_TOKEN can't be used because it's scoped to the source repo
+          # only and the org plan doesn't expose the "allow internal repo
+          # access" toggle.
+          token: ${{ secrets.GH_RELEASE_TOKEN }}
+
+      - name: Configure git author
+        run: |
+          git config user.name  "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+
+      - name: Configure git auth for sibling subtree clones
+        # `git subtree add|pull` clones each https://github.com/thinkeloquent/<sibling>
+        # under the hood; bootstrap.sh also runs `git ls-remote` per sibling
+        # before clone. This insteadOf rule routes every github.com HTTPS
+        # access through GH_RELEASE_TOKEN so the internal-org siblings resolve.
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GH_RELEASE_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Setup Python (for workspace tooling)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install check-jsonschema
+        # bootstrap.sh -> scripts/workspace/validate.sh validates workspace.toml
+        # against its JSON schema; without this, validate.sh exits 127.
+        run: |
+          pipx install check-jsonschema
+          check-jsonschema --version
+
+      - name: Reset $RELEASE_REF to $SOURCE_REF
+        # release/<X> is throwaway — start fresh from $SOURCE_REF every run.
+        # Whatever was on origin/release/<X> is irrelevant; the orphan-commit
+        # step at the end discards all parent history anyway.
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$SOURCE_REF"
+          git checkout -B "$RELEASE_REF" "origin/$SOURCE_REF"
+
+      - name: Strip ployglots/ symlinks (so subtree-add has empty prefixes)
+        # main commits every sibling as a symlink at ployglots/<name>; after
+        # the merge above those symlinks live on release/<X> too. git subtree
+        # add refuses to write into an occupied prefix, so we git-rm the
+        # tracked symlinks (and rm the working-tree ones) and record a
+        # single "strip" commit before assembly.
+        run: |
+          set -euo pipefail
+          mapfile -t prefixes < <(awk -F= '/^[[:space:]]*shell_path[[:space:]]*=/ { gsub(/[" ]/, "", $2); print $2 }' workspace.toml)
+          for p in "${prefixes[@]}"; do
+            if git ls-files --error-unmatch -- "$p" >/dev/null 2>&1; then
+              git rm -rf --quiet -- "$p"
+            elif [[ -L "$p" || -e "$p" ]]; then
+              rm -rf -- "$p"
+            fi
+          done
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): strip sibling symlinks before subtree assembly"
+          fi
+
+      - name: Subtree assemble — git subtree add --squash for every entry
+        # subtree-assemble.sh is the inverse of bootstrap: walks workspace.toml
+        # and runs `git subtree add --prefix=<shell_path> <remote> <default_ref>
+        # --squash` per entry. Replaces each (now-removed) symlink with a real
+        # squashed subtree directory.
+        run: ./scripts/workspace/subtree-assemble.sh assemble "$RELEASE_REF"
+
+      - name: Strip .claude/ from root and every subtree
+        # The orchestration repo carries a .claude submodule and each sibling
+        # carries its own .claude/ folder; both are Claude Code agent configs,
+        # i.e. dev tooling that shouldn't ship in the release artifact. Drop
+        # them all in one follow-up commit. .gitmodules is also stripped so
+        # consumers of release/* don't see a phantom submodule reference.
+        run: |
+          set -euo pipefail
+          mapfile -t prefixes < <(awk -F= '/^[[:space:]]*shell_path[[:space:]]*=/ { gsub(/[" ]/, "", $2); print $2 }' workspace.toml)
+          # Per-subtree .claude/
+          for p in "${prefixes[@]}"; do
+            if [[ -e "$p/.claude" ]]; then
+              git rm -rf --quiet -- "$p/.claude"
+            fi
+          done
+          # Root .claude (submodule) + .gitmodules.
+          if git ls-files --error-unmatch -- .claude >/dev/null 2>&1; then
+            git rm -rf --quiet -- .claude
+          elif [[ -e .claude || -L .claude ]]; then
+            rm -rf -- .claude
+          fi
+          if [[ -f .gitmodules ]]; then
+            git rm -f --quiet -- .gitmodules
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): strip .claude/ from root and each subtree"
+          fi
+
+      - name: Collapse to a parent-less orphan commit
+        # release/<X> is rebuilt from scratch every run with no shared
+        # history. Take the assembled working tree, wrap it as a parent-less
+        # commit, point release/<X> at it, and force-push. Result: release/<X>
+        # is always exactly one commit deep and contains main + assembled
+        # subtrees with .claude/ stripped. No merge-history bookkeeping.
+        run: |
+          set -euo pipefail
+          tree=$(git rev-parse HEAD^{tree})
+          orphan=$(git commit-tree "$tree" \
+            -m "release: assemble $RELEASE_REF from $SOURCE_REF (run #${{ github.run_number }})")
+          git update-ref "refs/heads/$RELEASE_REF" "$orphan"
+          git checkout "$RELEASE_REF"
+
+      - name: Push release branch (force)
+        # release/<X> is throwaway — every run rewrites it. --force-with-lease
+        # would refuse if someone else pushed in between; we deliberately
+        # use --force because the workflow is the sole writer of release/<X>.
+        run: git push --force origin "HEAD:$RELEASE_REF"

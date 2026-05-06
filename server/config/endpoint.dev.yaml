@@ -1,0 +1,157 @@
+# Endpoint Configuration - DEV Environment
+# Service endpoints for LLM and API services
+# Loaded by lifecycle hooks via: endpoint.${APP_ENV}.yaml
+#
+# ── Schema ──────────────────────────────────────────────────────────
+# endpoints:
+#   <key>:                        # Unique service ID (e.g. llm001)
+#     name:        string         # Human-friendly display name
+#     tags:        string[]       # Categorization tags for filtering
+#     baseUrl:     string         # Full base URL
+#     description: string         # What this endpoint does
+#     method:      GET | POST     # HTTP method (default: POST)
+#     headers:     map            # Default request headers
+#     timeout:     int            # Timeout in ms (default: 30000)
+#     bodyType:    json | text    # Body serialization (default: json)
+#
+# intent_mapping:
+#   mappings:
+#     <intent>: <endpoint-key>    # Maps a logical intent to a service
+#   default_intent: <key>         # Fallback when intent is unknown
+#
+# ── Usage (JavaScript) ─────────────────────────────────────────────
+#   // Get endpoint by key
+#   const ep = sdk.getByKey('llm001');
+#
+#   // Look up by human-friendly name
+#   const ep = sdk.getByName('Primary LLM');
+#
+#   // Filter by tag — returns all LLM endpoints
+#   const llms = sdk.getByTag('llm');    // → [llm001, llm002]
+#
+#   // Resolve intent → endpoint (caller doesn't hardcode service IDs)
+#   const { key, endpoint } = sdk.resolveIntent('chat');
+#
+#   // Build a ready-to-send fetch config
+#   const fc = sdk.getFetchConfig('llm001', { prompt: 'Hello' });
+#   // → { url, method, headers, body, headersTimeout }
+#
+# ── Usage (Python) ─────────────────────────────────────────────────
+#   ep       = sdk.get_by_key("llm001")
+#   ep       = sdk.get_by_name("Primary LLM")
+#   llms     = sdk.get_by_tag("llm")
+#   resolved = sdk.resolve_intent("chat")
+#   fc       = sdk.get_fetch_config("llm001", {"prompt": "Hello"})
+#
+# ── REST API ───────────────────────────────────────────────────────
+#   GET  /api/runtime-app-config/endpoints            # all endpoints
+#   GET  /api/runtime-app-config/endpoints/:key        # by key
+#   GET  /api/runtime-app-config/endpoints/by-name/:n  # by name
+#   GET  /api/runtime-app-config/endpoints/by-tag/:t   # by tag
+#   POST /api/runtime-app-config/endpoints/refresh     # re-read YAML
+#   GET  /api/runtime-app-config/resolve-intent/:i     # resolve intent
+# ────────────────────────────────────────────────────────────────────
+
+endpoints:
+  fastify:
+    name: "Fastify Server"
+    tags: ["api", "server", "nodejs"]
+    baseUrl: "http://localhost:51000"
+    description: "Fastify (Node.js)"
+    method: "GET"
+    headers:
+      Content-Type: "application/json"
+    timeout: 10000
+    bodyType: "json"
+
+  fastapi:
+    name: "FastAPI Server"
+    tags: ["api", "server", "python"]
+    baseUrl: "http://localhost:52000"
+    description: "FastAPI (Python)"
+    method: "GET"
+    headers:
+      Content-Type: "application/json"
+    timeout: 10000
+    bodyType: "json"
+
+  unknown:
+    name: "Unknown Service"
+    tags: ["api"]
+    baseUrl: "http://localhost:8080"
+    description: "FastAPI (Python)"
+    method: "GET"
+    headers:
+      Content-Type: "application/json"
+    timeout: 10000
+    bodyType: "json"
+
+  llm001:
+    name: "Primary LLM"
+    tags: ["llm", "gemini", "primary"]
+    baseUrl: "http://localhost:51000/api/llm/gemini-openai-v1"
+    description: "Primary LLM Service (Fastify)"
+    method: "POST"
+    headers:
+      Content-Type: "application/json"
+      X-Service-ID: "llm-primary"
+    timeout: 30000
+    bodyType: "json"
+
+  llm002:
+    name: "Secondary LLM"
+    tags: ["llm", "gemini", "secondary"]
+    baseUrl: "http://localhost:52000/api/llm/gemini-openai-v1"
+    description: "Secondary LLM Service (FastAPI)"
+    method: "POST"
+    headers:
+      Content-Type: "application/json"
+      X-Service-ID: "llm-secondary"
+    timeout: 30000
+    bodyType: "json"
+
+  agents001:
+    name: "Agent Executor"
+    tags: ["agent", "executor"]
+    baseUrl: "http://localhost:52000/api/llm/gemini-openai-v1"
+    description: "Agent Task Executor"
+    method: "POST"
+    headers:
+      Content-Type: "application/json"
+      X-Agent-Type: "standard"
+    timeout: 60000
+    bodyType: "json"
+
+  storybook001:
+    name: "UI Generator"
+    tags: ["ui", "generation"]
+    baseUrl: "http://localhost:52000/api/llm/gemini-openai-v1"
+    description: "UI Component Generation"
+    method: "POST"
+    headers:
+      Content-Type: "application/json"
+      X-Service-Role: "ui-gen"
+    timeout: 30000
+    bodyType: "json"
+
+  api001:
+    name: "API Gateway"
+    tags: ["api", "gateway"]
+    baseUrl: "http://localhost:52000"
+    description: "General API Gateway"
+    method: "POST"
+    headers:
+      Content-Type: "application/json"
+    timeout: 30000
+    bodyType: "json"
+
+# Intent to endpoint mapping
+intent_mapping:
+  mappings:
+    persona: llm001
+    chat: llm001
+    agent: agents001
+    storybook: storybook001
+    ui: storybook001
+    api: api001
+  default_intent: llm001

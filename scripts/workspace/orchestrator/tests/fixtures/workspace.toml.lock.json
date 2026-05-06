@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "source": "fixture",
+  "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "generator": "tests/fixtures",
+  "entry_count": 3,
+  "entries": [
+    {
+      "name": "fake-node",
+      "remote": "https://example.com/fake-node.git",
+      "local_path": "FIXTURE_TMPDIR/fake-node",
+      "shell_path": "ployglots/fake-node",
+      "language": "node",
+      "subtree_prefix": "ployglots/fake-node",
+      "default_ref": "main"
+    },
+    {
+      "name": "fake-py",
+      "remote": "https://example.com/fake-py.git",
+      "local_path": "FIXTURE_TMPDIR/fake-py",
+      "shell_path": "ployglots/fake-py",
+      "language": "python",
+      "subtree_prefix": "ployglots/fake-py",
+      "default_ref": "main"
+    },
+    {
+      "name": "fake-not-hydrated",
+      "remote": "https://example.com/fake-not-hydrated.git",
+      "local_path": "/nonexistent/path/that/will/never/exist",
+      "shell_path": "ployglots/fake-not-hydrated",
+      "language": "mixed",
+      "subtree_prefix": "ployglots/fake-not-hydrated",
+      "default_ref": "main"
+    }
+  ]
+}

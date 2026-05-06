@@ -1,0 +1,179 @@
+# workspace.toml — single source of truth for the polyglot meta-repo topology.
+#
+# Consumed by scripts/workspace/{bootstrap,emit-*,doctor,subtree-*}.sh.
+# Validated against scripts/workspace/schema/workspace.schema.json.
+#
+# Conventions:
+#   - name           : kebab-case, unique across the registry
+#   - remote         : Git remote URL (HTTPS or SSH)
+#   - local_path     : sibling clone location, relative to this orchestration shell
+#   - shell_path     : where the symlink to local_path lives inside this repo
+#   - language       : node | python | go | rust | mixed
+#   - subtree_prefix : path inside the assembled release branch (often == shell_path)
+#   - default_ref    : branch/tag pulled at release-assembly time (default: "main")
+#
+# A vault-stored override `WORKSPACE_OVERRIDE_<NAME_UPPER>` takes precedence
+# over `local_path` for engineers keeping siblings in non-default locations.
+# (See vault-file-priority memory: vault-wins.)
+
+# --- server / bootstrap runtimes ---
+
+[[entry]]
+name           = "server-bootstrap"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-server-bootstrap.git"
+local_path     = "../mta-ployglot-server-bootstrap"
+shell_path     = "ployglots/mta-ployglot-server-bootstrap"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-server-bootstrap"
+default_ref    = "main"
+
+[[entry]]
+name           = "print-routes"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-server-print-routes.git"
+local_path     = "../mta-ployglot-server-print-routes"
+shell_path     = "ployglots/mta-ployglot-server-print-routes"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-server-print-routes"
+default_ref    = "main"
+
+# --- api adapters (polyglot twins) ---
+
+[[entry]]
+name           = "api-aws-s3"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-api-aws-s3.git"
+local_path     = "../mta-ployglot-api-aws-s3"
+shell_path     = "ployglots/mta-ployglot-api-aws-s3"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-api-aws-s3"
+default_ref    = "main"
+
+[[entry]]
+name           = "api-github-project"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-api-github-project.git"
+local_path     = "../mta-ployglot-api-github-project"
+shell_path     = "ployglots/mta-ployglot-api-github-project"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-api-github-project"
+default_ref    = "main"
+
+# --- shared packages (polyglot twins) ---
+
+[[entry]]
+name           = "pkg-fetch-client"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-fetch-client.git"
+local_path     = "../mta-ployglot-pkg-fetch-client"
+shell_path     = "ployglots/mta-ployglot-pkg-fetch-client"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-fetch-client"
+default_ref    = "main"
+
+[[entry]]
+name           = "pkg-figma-api"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-figma-api.git"
+local_path     = "../mta-ployglot-pkg-figma-api"
+shell_path     = "ployglots/mta-ployglot-pkg-figma-api"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-figma-api"
+default_ref    = "main"
+
+# pkg-jira-api: remote not yet published on GitHub (returns "Repository not
+# found" via ls-remote). Re-enable once thinkeloquent/mta-ployglot-pkg-jira-api
+# exists, or set WORKSPACE_OVERRIDE_PKG_JIRA_API=/path/to/local/clone to point
+# at a local checkout under a different name.
+# [[entry]]
+# name           = "pkg-jira-api"
+# remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-jira-api.git"
+# local_path     = "../mta-ployglot-pkg-jira-api"
+# shell_path     = "ployglots/mta-ployglot-pkg-jira-api"
+# language       = "mixed"
+# subtree_prefix = "ployglots/mta-ployglot-pkg-jira-api"
+# default_ref    = "main"
+
+[[entry]]
+name           = "pkg-vault"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-vault.git"
+local_path     = "../mta-ployglot-pkg-vault"
+shell_path     = "ployglots/mta-ployglot-pkg-vault"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-vault"
+default_ref    = "main"
+
+[[entry]]
+name           = "pkg-env-resolve"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-env-resolve.git"
+local_path     = "../mta-ployglot-pkg-env-resolve"
+shell_path     = "ployglots/mta-ployglot-pkg-env-resolve"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-env-resolve"
+default_ref    = "main"
+
+[[entry]]
+name           = "pkg-app-yaml-loader"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-app-yaml-loader.git"
+local_path     = "../mta-ployglot-pkg-app-yaml-loader"
+shell_path     = "ployglots/mta-ployglot-pkg-app-yaml-loader"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-app-yaml-loader"
+default_ref    = "main"
+
+# Single sibling repo exposes BOTH @ployglot/runtime-template-resolver
+# (engine, used by F02) and @ployglot/app-yaml-from-context (applier, used
+# by F04). One entry covers both — do not add a separate
+# pkg-app-yaml-from-context block.
+[[entry]]
+name           = "pkg-runtime-template-resolver"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-app-yaml-overwrite.git"
+local_path     = "../mta-ployglot-pkg-app-yaml-overwrite"
+shell_path     = "ployglots/mta-ployglot-pkg-app-yaml-overwrite"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-app-yaml-overwrite"
+default_ref    = "main"
+
+[[entry]]
+name           = "pkg-app-yaml-config"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-app-yaml-config.git"
+local_path     = "../mta-ployglot-pkg-app-yaml-config"
+shell_path     = "ployglots/mta-ployglot-pkg-app-yaml-config"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-app-yaml-config"
+default_ref    = "main"
+
+[[entry]]
+name           = "pkg-app-yaml-fetch-config"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-pkg-app-yaml-fetch-config.git"
+local_path     = "../mta-ployglot-pkg-app-yaml-fetch-config"
+shell_path     = "ployglots/mta-ployglot-pkg-app-yaml-fetch-config"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-pkg-app-yaml-fetch-config"
+default_ref    = "main"
+
+# --- tools ---
+
+[[entry]]
+name           = "tools-flatten-project-files"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-tools-flatten-project-files.git"
+local_path     = "../mta-ployglot-tools-flatten-project-files"
+shell_path     = "ployglots/mta-ployglot-tools-flatten-project-files"
+language       = "rust"
+subtree_prefix = "ployglots/mta-ployglot-tools-flatten-project-files"
+default_ref    = "main"
+
+[[entry]]
+name           = "tools-prompt-injection-defense"
+remote         = "https://github.com/thinkeloquent/mta-ployglot-tools-prompt-injection-defense-strategies.git"
+local_path     = "../mta-ployglot-tools-prompt-injection-defense-strategies"
+shell_path     = "ployglots/mta-ployglot-tools-prompt-injection-defense-strategies"
+language       = "mixed"
+subtree_prefix = "ployglots/mta-ployglot-tools-prompt-injection-defense-strategies"
+default_ref    = "main"
+
+# --- examples (kept commented; copy & uncomment as templates) ---
+
+# [[entry]]
+# name           = "example-go-service"
+# remote         = "https://github.com/<org>/example-go-service.git"
+# local_path     = "../example-go-service"
+# shell_path     = "ployglots/example-go-service"
+# language       = "go"
+# subtree_prefix = "ployglots/example-go-service"
+# default_ref    = "main"

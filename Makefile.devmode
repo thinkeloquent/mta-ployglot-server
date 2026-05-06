@@ -1,0 +1,250 @@
+# Makefile.devmode — host-direct dev mode (no docker).
+#
+# `make dev` runs both servers directly on the host. Sources are staged under
+# .dev/{fastify,fastapi}/ so we don't mutate the read-only sibling. Background
+# mode writes logs to .dev/*.log and PIDs to .dev/*.pid. Use `make dev-fastify`
+# or `make dev-fastapi` for foreground iteration.
+
+# ---------------------------------------------------------------------------
+# Runtime config-fixtures dir, exported into every dev-mode subshell.
+#
+# Lifecycle 25 (`server/{fastify,fastapi}/config/lifecycles/25_app_yaml_loader`)
+# reads APP_YAML_FIXTURES_DIR to locate `server/config/`. The override is
+# required for fastify dev mode: the lifecycle file is rsync-staged into
+# `.dev/fastify-app/`, so `import.meta.url`-relative resolution would land at
+# `.dev/config/` (which is not staged). For fastapi this is parity-only —
+# the runtime executes against the real source tree.
+#
+# Distinct from the Makefile.vars `APP_YAML_CONFIG_DIR` variable, which points
+# at the SDK source clone (`ployglots/mta-ployglot-pkg-app-yaml-config`). Do
+# not unify the names.
+# ---------------------------------------------------------------------------
+
+export APP_YAML_FIXTURES_DIR := $(CURDIR)/server/config
+
+# ---------------------------------------------------------------------------
+# preflight + install
+# ---------------------------------------------------------------------------
+
+.PHONY: dev-preflight
+dev-preflight: ## Abort early if node / npm / uv are missing
+	@missing=""; \
+	for bin in node npm; do command -v $$bin >/dev/null || missing="$$missing $$bin"; done; \
+	command -v uv >/dev/null || missing="$$missing uv"; \
+	if [ -n "$$missing" ]; then \
+	  echo "==> missing required tools:$$missing"; \
+	  echo "    install uv:  curl -LsSf https://astral.sh/uv/install.sh | sh"; \
+	  echo "    install node: use nvm / homebrew / nodejs.org"; \
+	  exit 1; \
+	fi
+
+.PHONY: dev-install-fastify
+dev-install-fastify: ## Build bootstrap into .dev/fastify + stage server/fastify into .dev/fastify-app
+	@test -d $(BOOTSTRAP_DIR)/fastify_server || { echo "submodule not initialized; run: make init"; exit 1; }
+	@mkdir -p $(DEV_FASTIFY)
+	@command -v rsync >/dev/null && \
+	  rsync -a --delete --exclude node_modules --exclude dist --exclude .smoke-logs \
+	    $(BOOTSTRAP_DIR)/fastify_server/ $(DEV_FASTIFY)/ || \
+	  cp -R $(BOOTSTRAP_DIR)/fastify_server/. $(DEV_FASTIFY)/
+	@# npm packages MUST come from Verdaccio at http://localhost:4873/. The
+	@# upstream lockfile already resolves to that registry, so `npm ci` will
+	@# fail-loud if Verdaccio isn't running — start it before invoking dev.
+	cd $(DEV_FASTIFY) && npm ci --no-audit --no-fund
+	cd $(DEV_FASTIFY) && npm run build
+	@# Stage the standalone app (server/fastify) into .dev/fastify-app. Per
+	@# CLAUDE.md: only workspace.toml siblings get symlinked; every other
+	@# dependency (fastify-plugin, etc.) must be installed via npm. Order:
+	@# (1) rsync sources, (2) npm ci to install all deps, (3) overwrite the
+	@# two workspace.toml siblings with symlinks pointing at live sources.
+	@mkdir -p $(DEV_FASTIFY_APP)
+	@command -v rsync >/dev/null && \
+	  rsync -a --delete --exclude node_modules \
+	    $(SERVER_FASTIFY)/ $(DEV_FASTIFY_APP)/ || \
+	  cp -R $(SERVER_FASTIFY)/. $(DEV_FASTIFY_APP)/
+	cd $(DEV_FASTIFY_APP) && npm ci --no-audit --no-fund
+	@# fastify-server: workspace.toml entry server-bootstrap → symlink to .dev/fastify (built).
+	@mkdir -p $(DEV_FASTIFY_APP)/node_modules/@mta
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/fastify-server
+	@ln -s $(DEV_FASTIFY) $(DEV_FASTIFY_APP)/node_modules/fastify-server
+	@# @mta/print-routes-fastify: workspace.toml entry print-routes → symlink to sibling.
+	@test -d $(PRINT_ROUTES_DIR)/packages/mjs || { \
+	  echo "==> $(PRINT_ROUTES_DIR)/packages/mjs not found — clone mta-ployglot-server-print-routes alongside this repo"; exit 1; }
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@mta/print-routes-fastify
+	@ln -s $(PRINT_ROUTES_DIR)/packages/mjs $(DEV_FASTIFY_APP)/node_modules/@mta/print-routes-fastify
+	@# @org/env-resolve: workspace.toml entry pkg-env-resolve → symlink to sibling.
+	@test -d $(ENV_RESOLVE_DIR)/packages/ts/dist || { \
+	  echo "==> $(ENV_RESOLVE_DIR)/packages/ts/dist not found — run 'npm run build' in mta-ployglot-pkg-env-resolve/packages/ts"; exit 1; }
+	@mkdir -p $(DEV_FASTIFY_APP)/node_modules/@org
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@org/env-resolve
+	@ln -s $(ENV_RESOLVE_DIR)/packages/ts $(DEV_FASTIFY_APP)/node_modules/@org/env-resolve
+	@# @ployglot/app-yaml-loader: workspace.toml entry pkg-app-yaml-loader → symlink to sibling.
+	@test -d $(APP_YAML_LOADER_DIR)/packages/mjs || { \
+	  echo "==> $(APP_YAML_LOADER_DIR)/packages/mjs not found — clone mta-ployglot-pkg-app-yaml-loader into ployglots/"; exit 1; }
+	@mkdir -p $(DEV_FASTIFY_APP)/node_modules/@ployglot
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-loader
+	@ln -s $(APP_YAML_LOADER_DIR)/packages/mjs $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-loader
+	@# @ployglot/runtime-template-resolver (engine) — same sibling repo as F04 applier.
+	@test -d $(APP_YAML_OVERWRITE_DIR)/packages/engine-mjs || { \
+	  echo "==> $(APP_YAML_OVERWRITE_DIR)/packages/engine-mjs not found"; exit 1; }
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@ployglot/runtime-template-resolver
+	@ln -s $(APP_YAML_OVERWRITE_DIR)/packages/engine-mjs $(DEV_FASTIFY_APP)/node_modules/@ployglot/runtime-template-resolver
+	@# @ployglot/app-yaml-from-context (applier) — same sibling repo as F02 engine.
+	@test -d $(APP_YAML_OVERWRITE_DIR)/packages/applier-mjs || { \
+	  echo "==> $(APP_YAML_OVERWRITE_DIR)/packages/applier-mjs not found"; exit 1; }
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-from-context
+	@ln -s $(APP_YAML_OVERWRITE_DIR)/packages/applier-mjs $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-from-context
+	@# @ployglot/app-yaml-config
+	@test -d $(APP_YAML_CONFIG_DIR)/packages/mjs || { \
+	  echo "==> $(APP_YAML_CONFIG_DIR)/packages/mjs not found"; exit 1; }
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-config
+	@ln -s $(APP_YAML_CONFIG_DIR)/packages/mjs $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-config
+	@# @ployglot/app-yaml-fetch-config
+	@test -d $(APP_YAML_FETCH_CONFIG_DIR)/packages/mjs || { \
+	  echo "==> $(APP_YAML_FETCH_CONFIG_DIR)/packages/mjs not found"; exit 1; }
+	@rm -rf $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-fetch-config
+	@ln -s $(APP_YAML_FETCH_CONFIG_DIR)/packages/mjs $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-fetch-config
+
+.PHONY: dev-install-fastapi
+dev-install-fastapi: ## Create .dev/fastapi venv and install fastapi_server + print-routes-fastapi + fetch-http-client editable
+	@test -d $(BOOTSTRAP_DIR)/fastapi_server || { echo "submodule not initialized; run: make init"; exit 1; }
+	@test -d $(PRINT_ROUTES_DIR)/packages/py || { \
+	  echo "==> $(PRINT_ROUTES_DIR)/packages/py not found — clone mta-ployglot-server-print-routes alongside this repo"; exit 1; }
+	@test -d $(FETCH_CLIENT_DIR)/packages/py || { \
+	  echo "==> $(FETCH_CLIENT_DIR)/packages/py not found — clone mta-ployglot-pkg-fetch-client into ployglots/"; exit 1; }
+	@test -d $(ENV_RESOLVE_DIR)/packages/py || { \
+	  echo "==> $(ENV_RESOLVE_DIR)/packages/py not found — clone mta-ployglot-pkg-env-resolve into ployglots/"; exit 1; }
+	@test -d $(APP_YAML_LOADER_DIR)/packages/py || { \
+	  echo "==> $(APP_YAML_LOADER_DIR)/packages/py not found — clone mta-ployglot-pkg-app-yaml-loader into ployglots/"; exit 1; }
+	@test -d $(APP_YAML_OVERWRITE_DIR)/packages/engine-py || { \
+	  echo "==> $(APP_YAML_OVERWRITE_DIR)/packages/engine-py not found — clone mta-ployglot-pkg-app-yaml-overwrite into ployglots/"; exit 1; }
+	@test -d $(APP_YAML_OVERWRITE_DIR)/packages/applier-py || { \
+	  echo "==> $(APP_YAML_OVERWRITE_DIR)/packages/applier-py not found — clone mta-ployglot-pkg-app-yaml-overwrite into ployglots/"; exit 1; }
+	@test -d $(APP_YAML_CONFIG_DIR)/packages/py || { \
+	  echo "==> $(APP_YAML_CONFIG_DIR)/packages/py not found — clone mta-ployglot-pkg-app-yaml-config into ployglots/"; exit 1; }
+	@test -d $(APP_YAML_FETCH_CONFIG_DIR)/packages/py || { \
+	  echo "==> $(APP_YAML_FETCH_CONFIG_DIR)/packages/py not found — clone mta-ployglot-pkg-app-yaml-fetch-config into ployglots/"; exit 1; }
+	@mkdir -p $(DEV_FASTAPI)
+	@test -d $(DEV_VENV) || uv venv $(DEV_VENV) --python 3.13
+	uv pip install --python $(DEV_VENV)/bin/python \
+	  -e "$(BOOTSTRAP_DIR)/fastapi_server" \
+	  -e "$(PRINT_ROUTES_DIR)/packages/py" \
+	  -e "$(FETCH_CLIENT_DIR)/packages/py" \
+	  -e "$(ENV_RESOLVE_DIR)/packages/py" \
+	  -e "$(APP_YAML_LOADER_DIR)/packages/py" \
+	  -e "$(APP_YAML_OVERWRITE_DIR)/packages/engine-py" \
+	  -e "$(APP_YAML_OVERWRITE_DIR)/packages/applier-py" \
+	  -e "$(APP_YAML_CONFIG_DIR)/packages/py" \
+	  -e "$(APP_YAML_FETCH_CONFIG_DIR)/packages/py"
+
+.PHONY: dev-install
+dev-install: dev-preflight dev-install-fastify dev-install-fastapi ## Install both dev stages
+
+# ---------------------------------------------------------------------------
+# foreground runners
+# ---------------------------------------------------------------------------
+
+.PHONY: dev-fastify
+dev-fastify: dev-install-fastify ## Run fastify on the host with node --watch (foreground)
+	@if lsof -tiTCP:$(FASTIFY_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+	  echo "==> port $(FASTIFY_PORT) in use — run 'make dev-stop' or override FASTIFY_PORT"; exit 1; fi
+	@echo "==> fastify http://127.0.0.1:$(FASTIFY_PORT) (Ctrl-C to stop)"
+	cd $(DEV_FASTIFY_APP) && PORT=$(FASTIFY_PORT) POLYGLOT_DEBUG=1 node --watch main.mjs
+
+.PHONY: dev-fastapi
+dev-fastapi: dev-install-fastapi ## Run fastapi on the host via .dev venv (foreground)
+	@if lsof -tiTCP:$(FASTAPI_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+	  echo "==> port $(FASTAPI_PORT) in use — run 'make dev-stop' or override FASTAPI_PORT"; exit 1; fi
+	@echo "==> fastapi http://127.0.0.1:$(FASTAPI_PORT) (Ctrl-C to stop)"
+	cd $(SERVER_FASTAPI) && PORT=$(FASTAPI_PORT) POLYGLOT_DEBUG=1 PYTHONDONTWRITEBYTECODE=1 $(DEV_VENV)/bin/python main.py
+
+# ---------------------------------------------------------------------------
+# background runners
+# ---------------------------------------------------------------------------
+
+.PHONY: dev
+dev: dev-stop dev-install ## Start both servers in background (host direct-run)
+	@# dev-stop already cleared host-run node/python processes. If a docker
+	@# compose stack is still holding ports, bring it down so dev mode can
+	@# claim them. Skip silently if the docker daemon isn't running.
+	@if docker info >/dev/null 2>&1; then \
+	  $(COMPOSE) down --remove-orphans >/dev/null 2>&1 || true; \
+	fi
+	@# Wait up to 10s for LISTEN bindings to clear. Use `-sTCP:LISTEN` so
+	@# TIME_WAIT / CLOSE_WAIT leftovers from docker-proxy teardown don't
+	@# trigger a false-positive "port in use" error.
+	@for port in $(FASTIFY_PORT) $(FASTAPI_PORT); do \
+	  for i in 1 2 3 4 5 6 7 8 9 10; do \
+	    lsof -tiTCP:$$port -sTCP:LISTEN >/dev/null 2>&1 || break; \
+	    sleep 1; \
+	  done; \
+	  if lsof -tiTCP:$$port -sTCP:LISTEN >/dev/null 2>&1; then \
+	    echo "==> port $$port still in use after cleanup:"; \
+	    lsof -iTCP:$$port -sTCP:LISTEN -nP || true; \
+	    exit 1; \
+	  fi; \
+	done
+	@mkdir -p $(DEV_DIR)
+	@# Truncate per-stream files so each `make dev` run starts from empty logs.
+	@: > $(DEV_DIR)/fastify.log
+	@: > $(DEV_DIR)/fastify.request.log
+	@: > $(DEV_DIR)/fastify.error.log
+	@: > $(DEV_DIR)/fastapi.log
+	@: > $(DEV_DIR)/fastapi.request.log
+	@: > $(DEV_DIR)/fastapi.error.log
+	@echo "==> starting fastify (:$(FASTIFY_PORT))"
+	cd $(DEV_FASTIFY_APP) && LOG_DIR=$(DEV_DIR) PORT=$(FASTIFY_PORT) POLYGLOT_DEBUG=1 node main.mjs \
+	  > $(DEV_DIR)/fastify.log 2> $(DEV_DIR)/fastify.error.log & echo $$! > $(DEV_DIR)/fastify.pid
+	@echo "==> starting fastapi (:$(FASTAPI_PORT))"
+	cd $(SERVER_FASTAPI) && LOG_DIR=$(DEV_DIR) PORT=$(FASTAPI_PORT) POLYGLOT_DEBUG=1 PYTHONDONTWRITEBYTECODE=1 $(DEV_VENV)/bin/python main.py \
+	  > $(DEV_DIR)/fastapi.log 2> $(DEV_DIR)/fastapi.error.log & echo $$! > $(DEV_DIR)/fastapi.pid
+	@echo ""
+	@echo "  fastify: http://127.0.0.1:$(FASTIFY_PORT)"
+	@echo "    setup:   $(DEV_DIR)/fastify.log"
+	@echo "    request: $(DEV_DIR)/fastify.request.log"
+	@echo "    error:   $(DEV_DIR)/fastify.error.log"
+	@echo "  fastapi: http://127.0.0.1:$(FASTAPI_PORT)"
+	@echo "    setup:   $(DEV_DIR)/fastapi.log"
+	@echo "    request: $(DEV_DIR)/fastapi.request.log"
+	@echo "    error:   $(DEV_DIR)/fastapi.error.log"
+	@echo ""
+	@echo "  tail all:     make dev-logs"
+	@echo "  healthcheck:  make healthz"
+	@echo "  stop:         make dev-stop"
+
+.PHONY: dev-stop
+dev-stop: ## Stop background dev servers (idempotent)
+	@for svc in fastify fastapi; do \
+	  pidfile=$(DEV_DIR)/$$svc.pid; \
+	  if [ -f $$pidfile ]; then \
+	    kill $$(cat $$pidfile) 2>/dev/null || true; \
+	    rm -f $$pidfile; \
+	  fi; \
+	done
+	@# Only kill processes whose command name matches a dev-mode runner.
+	@# `lsof -ti | xargs kill` indiscriminately would also kill Docker's
+	@# port-proxy process, which takes down the whole docker daemon.
+	@for port in $(FASTIFY_PORT) $(FASTAPI_PORT); do \
+	  for pid in $$(lsof -tiTCP:$$port -sTCP:LISTEN -nP 2>/dev/null); do \
+	    cmd=$$(ps -o comm= -p $$pid 2>/dev/null || echo ""); \
+	    case "$$cmd" in \
+	      *node*|*python*|*Python*) kill $$pid 2>/dev/null || true ;; \
+	    esac; \
+	  done; \
+	done
+	@# Match both the legacy submodule-examples paths and the new
+	@# server/fastify, server/fastapi, and .dev/fastify-app paths.
+	@pkill -f "node .*main\.mjs" 2>/dev/null || true
+	@pkill -f "python.*main\.py" 2>/dev/null || true
+	@pkill -f "fastapi_server/examples/quickstart/main.py" 2>/dev/null || true
+	@echo "==> dev servers stopped"
+
+.PHONY: dev-logs
+dev-logs: ## Tail all six dev log files (setup / request / error × fastify / fastapi)
+	@test -d $(DEV_DIR) || { echo "no dev session — run 'make dev' first"; exit 1; }
+	tail -f \
+	  $(DEV_DIR)/fastify.log $(DEV_DIR)/fastify.request.log $(DEV_DIR)/fastify.error.log \
+	  $(DEV_DIR)/fastapi.log $(DEV_DIR)/fastapi.request.log $(DEV_DIR)/fastapi.error.log
+
+.PHONY: dev-clean
+dev-clean: dev-stop ## Remove .dev/ staging entirely (forces re-install on next run)
+	rm -rf $(DEV_DIR)

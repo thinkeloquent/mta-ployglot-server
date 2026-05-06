@@ -1,0 +1,26 @@
+# ──────────────────────────────────────────────────────────────
+# MTA Database Schema – Shared Sequelize Model Configuration
+# ──────────────────────────────────────────────────────────────
+# Canonical source of truth for common model options.
+# Import via:
+#   import { loadDatabaseSchema } from '@internal/common-config/database_schema.mjs';
+# ──────────────────────────────────────────────────────────────
+
+# Global table-name prefix applied to every model.
+# Each app still owns its own suffix, e.g. "mta_persona_editor_personas".
+table_prefix: "mta_"
+
+# Postgres schema used when no app-specific override is provided.
+fallback_schema: "public"
+
+# Sequelize define-level defaults applied to every model.
+define_defaults:
+  timestamps: true        # createdAt / updatedAt columns
+  underscored: true       # camelCase attrs → snake_case columns
+  freezeTableName: true   # prevent Sequelize from pluralising tableName
+
+# Primary-key conventions (informational – applied per model).
+primary_key:
+  type: "UUID"            # DataTypes.UUID
+  default_value: "UUIDV4" # DataTypes.UUIDV4
+  allow_null: false

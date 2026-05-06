@@ -1,0 +1,42 @@
+# server/fastify/.dockerignore
+# Keep the build context small and deterministic.
+
+# VCS + plan + docs
+.git
+.gitmodules
+.gitignore
+.github
+.claude
+.agent
+.agents
+.Agent.md
+.agent.md
+.agent.json
+*.md
+LICENSE
+
+# Editor / OS junk
+.vscode
+.idea
+*.swp
+**/.DS_Store
+
+# Logs + caches
+**/*.log
+.smoke-logs
+**/.cache
+**/.nx
+
+# Python build artifacts (no python in this image)
+**/__pycache__
+**/.venv
+**/*.egg-info
+**/.pytest_cache
+
+# Node artifacts from host (we rebuild inside the image)
+**/node_modules
+**/dist
+**/.turbo
+
+# Sibling service tree — not needed for fastify build
+server/fastapi
