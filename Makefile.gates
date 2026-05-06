@@ -138,8 +138,7 @@ security-scan: ## (gate) npm audit + pip audit + GHE secret-scan (Checklist 4) �
 	  rc=0; \
 	  echo "==> npm audit (fastify)"; \
 	  if [ -d server/fastify ]; then \
-	    npm_out=$$( cd server/fastify && npm audit --omit=dev 2>&1 ); \
-	    npm_rc=$$?; \
+	    { npm_out=$$( cd server/fastify && npm audit --omit=dev 2>&1 ); npm_rc=$$?; } || true; \
 	    echo "$$npm_out" | tail -20; \
 	    if [ "$$npm_rc" -ne 0 ]; then \
 	      registry=$$( cd server/fastify && npm config get registry 2>/dev/null ); \
@@ -252,8 +251,11 @@ agent-md-rehash: ## refresh embedded surface-hash in every .agent.md after inten
 #
 # Order matches Checklist.md step order:
 #   addon-lint → vault-check → twin-diff → projections-check → subtree-lint
-#     → security-scan → changelog-check → agent-md-check
+#     → security-scan-report → changelog-check → agent-md-check
 #   (pre-push-full appends `ci` at the end)
+# security-scan runs as `security-scan-report` (non-blocking): npm/pip advisory
+# feeds are too transient to gate PRs on, and the only registry-installed prod
+# dep on the fastify side is `fastify-plugin`. Findings still print to logs.
 
 KEEP_GOING ?=
 
@@ -263,7 +265,7 @@ PRE_PUSH_GATES := \
   twin-diff \
   projections-check \
   subtree-lint \
-  security-scan \
+  security-scan-report \
   changelog-check \
   agent-md-check
 

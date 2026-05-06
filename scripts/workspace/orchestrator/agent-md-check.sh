@@ -35,8 +35,11 @@ compute_surface_hash() {
   [[ -d "server/parity" ]] && dirs+=("server/parity")
   [[ "${#dirs[@]}" -gt 0 ]] || { echo ""; return 0; }
 
+  # LC_ALL=C ensures byte-order sort so the hash is stable across macOS (UTF-8
+  # default locale puts `_foo.py` before `10_foo.py`) and Linux CI (C locale
+  # does the opposite). Without this the gate spuriously fails per-platform.
   find "${dirs[@]}" -type f \( -name '*.mjs' -o -name '*.py' -o -name '*.js' \) -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/.venv/*' \
-    | sort \
+    | LC_ALL=C sort \
     | xargs cat 2>/dev/null \
     | shasum -a 256 \
     | cut -c1-16

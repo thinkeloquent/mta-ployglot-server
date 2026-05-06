@@ -58,10 +58,25 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install check-jsonschema
+        # bootstrap.sh -> scripts/workspace/validate.sh validates workspace.toml
+        # against its JSON schema; without this, validate.sh exits 127.
+        run: |
+          pipx install check-jsonschema
+          check-jsonschema --version
+
+      - name: Configure git auth for sibling clones
+        # bootstrap.sh clones every workspace.toml sibling via raw HTTPS.
+        # actions/checkout's RELEASE_ASSEMBLE_TOKEN only applies to the current
+        # repo's .git/config, so install a global insteadOf rule that reuses
+        # the same token for every github.com HTTPS clone bootstrap performs.
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.RELEASE_ASSEMBLE_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Hydrate siblings + doctor
         run: |
           export WORKSPACE_OVERRIDE_ROOT="$RUNNER_TEMP/siblings"
-          ./scripts/workspace/bootstrap.sh hydrate
+          ./scripts/workspace/bootstrap.sh
           make doctor
 
       - name: Subtree pull at sibling HEADs (writes /tmp/snapshot.jsonl)

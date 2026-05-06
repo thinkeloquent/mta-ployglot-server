@@ -73,7 +73,7 @@ install-node: ## npm install in server/fastify (pulls @mta/print-routes-fastify 
 	cd $(SERVER_FASTIFY) && npm install
 
 .PHONY: install-python
-install-python: ## Create server/fastapi/.venv and pip install (bypasses poetry; fastapi_server + print-routes-fastapi editable)
+install-python: ## Create server/fastapi/.venv and pip install every workspace py twin editable (bypasses poetry; mirrors server/fastapi/pyproject.toml)
 	@if [ -d $(SERVER_FASTAPI)/.venv ] && ! $(SERVER_FASTAPI)/.venv/bin/python --version 2>/dev/null | grep -q ' 3\.11\.'; then \
 	  echo "→ rebuilding .venv (existing Python is not 3.11.x)"; \
 	  rm -rf $(SERVER_FASTAPI)/.venv; \
@@ -82,7 +82,14 @@ install-python: ## Create server/fastapi/.venv and pip install (bypasses poetry;
 	$(SERVER_FASTAPI)/.venv/bin/pip install --upgrade pip
 	$(SERVER_FASTAPI)/.venv/bin/pip install \
 	  -e $(BOOTSTRAP_DIR)/fastapi_server \
-	  -e $(ROOT_DIR)/../mta-ployglot-server-print-routes/packages/py \
+	  -e $(PRINT_ROUTES_DIR)/packages/py \
+	  -e $(FETCH_CLIENT_DIR)/packages/py \
+	  -e $(ENV_RESOLVE_DIR)/packages/py \
+	  -e $(APP_YAML_LOADER_DIR)/packages/py \
+	  -e $(APP_YAML_OVERWRITE_DIR)/packages/engine-py \
+	  -e $(APP_YAML_OVERWRITE_DIR)/packages/applier-py \
+	  -e $(APP_YAML_CONFIG_DIR)/packages/py \
+	  -e $(APP_YAML_FETCH_CONFIG_DIR)/packages/py \
 	  'uvicorn[standard]>=0.30'
 
 .PHONY: docker-install
