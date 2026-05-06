@@ -27,24 +27,59 @@ print-env: ## Print tool versions (debug)
 # submodule / sibling hydration
 # ---------------------------------------------------------------------------
 #
-# Three entry points, pick the one that matches how you want sibling repos
-# wired in:
+# Four entry points, pick the one that matches how you want sibling repos
+# wired in. Most users want `bootstrap` — it picks the right mode based on
+# the current branch.
+#
+#   bootstrap     auto-detect the branch and hydrate accordingly:
+#                   release/*  → siblings already squashed-in as subtrees;
+#                                run the emitter chain only (Makefile.entries,
+#                                pnpm-workspace.yaml, go.work, Cargo.toml,
+#                                .dev/workspace.toml.lock.json, docker-compose).
+#                   anything   → siblings hydrated via clone + symlink, then
+#                   else         emit. This is the default dev topology.
+#                 Override with BOOTSTRAP_MODE=clone|reemit if branch detection
+#                 is wrong (e.g. detached HEAD in CI).
 #
 #   init          regenerate .dev/workspace.toml.lock.json + init any
-#                 submodules. Does NOT clone or assemble siblings — useful
-#                 if you already have a hydrated workspace.
+#                 submodules. Does NOT clone or assemble siblings, and does
+#                 NOT regenerate Makefile.entries — useful only if you
+#                 already have a fully hydrated workspace.
 #
-#   init-clone    hydrate siblings per workspace.toml as separate clones at
-#                 `../<name>/` with relative symlinks under `ployglots/<name>/`,
-#                 then re-emit every per-language manifest. This is the
-#                 default development topology.
+#   init-clone    force the dev-mode path: hydrate siblings per workspace.toml
+#                 as separate clones at `../<name>/` with relative symlinks
+#                 under `ployglots/<name>/`, then re-emit manifests.
 #
-#   init-subtree  hydrate siblings IN-TREE as squashed git subtrees under
-#                 `ployglots/<name>/`, on whatever branch is currently
-#                 checked out. Use when you want a self-contained checkout
-#                 with no sibling clones (CI runners, demos, single-repo
-#                 onboarding). Distinct from `release-assemble`, which
+#   init-subtree  force the subtree path: hydrate siblings IN-TREE as squashed
+#                 git subtrees under `ployglots/<name>/`, on whatever branch
+#                 is currently checked out. Use when you want a self-contained
+#                 checkout with no sibling clones (CI runners, demos, single-
+#                 repo onboarding). Distinct from `release-assemble`, which
 #                 requires REF=release/* and is for release branch builds.
+
+.PHONY: bootstrap
+bootstrap: ## Auto-hydrate by branch: release/* → re-emit manifests only; else → clone+symlink+emit
+	@mode="$${BOOTSTRAP_MODE:-}"; \
+	if [ -z "$$mode" ]; then \
+	  branch=$$(git -C $(ROOT_DIR) rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown); \
+	  case "$$branch" in \
+	    release/*) mode=reemit ;; \
+	    *)         mode=clone  ;; \
+	  esac; \
+	  echo "==> branch=$$branch → BOOTSTRAP_MODE=$$mode"; \
+	else \
+	  echo "==> BOOTSTRAP_MODE=$$mode (override)"; \
+	fi; \
+	case "$$mode" in \
+	  reemit) \
+	    echo "==> release-mode: ployglots/ already in-tree as subtrees; running emitter chain only"; \
+	    bash $(ROOT_DIR)/scripts/workspace/bootstrap.sh --re-emit-only ;; \
+	  clone) \
+	    echo "==> dev-mode: hydrating siblings via clone + symlink, then emitting manifests"; \
+	    bash $(ROOT_DIR)/scripts/workspace/bootstrap.sh ;; \
+	  *) \
+	    echo "FAIL: unknown BOOTSTRAP_MODE='$$mode' (expected: clone|reemit)" >&2; exit 64 ;; \
+	esac
 
 .PHONY: init
 init: workspace-lock-emit ## Generate .dev/workspace.toml.lock.json + init any submodules (no sibling hydration)
