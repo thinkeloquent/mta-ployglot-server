@@ -1,81 +1,100 @@
-"""Per-provider factories returning configured AsyncClient instances."""
+"""Per-provider factories returning configured AsyncClient instances.
+
+Each `make_<provider>_client` reads its slice from the post-pipeline
+`get_config()["providers"][<name>]` and composes an AsyncClient via the
+shared helpers in `_shared_fetch.py`. The yaml is the single source of
+truth for base URLs, auth tokens (resolved at boot via
+`{{fn:provider_api_keys.<name>}}`), credentials (`email` / `username`),
+and static headers — no env reads here.
+
+Pattern B: factories stay separate, named functions for greppability;
+shared logic lives in helpers; provider-specific quirks
+(e.g. confluence's `/wiki` strip) stay visible inline.
+"""
 
 from __future__ import annotations
 
-from fetch_http_client import APIKeyAuth, AsyncClient, BasicAuth, BearerAuth
+from app_yaml_fetch_config import get_config
+from fetch_http_client import AsyncClient
 
-from ._shared_fetch import build_proxy, optional_env, require_env
+from ._shared_fetch import (
+    resolve_auth,
+    resolve_base_url,
+    resolve_static_headers,
+    with_proxy_kwargs,
+)
 
 
-def _kwargs_with_proxy(base: dict) -> dict:
-    proxy = build_proxy({})
-    if proxy is not None:
-        base["proxy"] = proxy
-    return base
+def _slice(name: str) -> dict:
+    cfg = get_config()
+    providers = cfg.get("providers") if isinstance(cfg, dict) else None
+    slice_ = (providers or {}).get(name)
+    if not slice_:
+        raise RuntimeError(
+            f"cfg.providers.{name} is missing; check server.dev.yaml and slot 29 wiring"
+        )
+    return slice_
 
 
 async def make_jira_client() -> AsyncClient:
-    return AsyncClient(**_kwargs_with_proxy({
-        "base_url": require_env("JIRA_BASE_URL"),
-        "auth": BasicAuth(require_env("JIRA_EMAIL"), require_env("JIRA_API_TOKEN")),
-        "headers": {"accept": "application/json"},
+    slice_ = _slice("jira")
+    return AsyncClient(**with_proxy_kwargs({
+        "base_url": resolve_base_url(slice_),
+        "auth":     resolve_auth(slice_),
+        "headers":  resolve_static_headers(slice_),
     }))
 
 
 async def make_confluence_client() -> AsyncClient:
-    # Strip a trailing `/wiki` (and any trailing slash) from the env so route paths
-    # can carry the full `/wiki/rest/api/...` prefix without double-prefixing
-    # when CONFLUENCE_BASE_URL is set to `https://<tenant>.atlassian.net/wiki`.
-    base_url = require_env("CONFLUENCE_BASE_URL").rstrip("/")
+    slice_ = _slice("confluence")
+    # Strip a trailing `/wiki` (and any trailing slash) from the resolved
+    # base_url so route paths can carry the full `/wiki/rest/api/...`
+    # prefix without double-prefixing when the yaml-resolved value is
+    # `https://<tenant>.atlassian.net/wiki`. The yaml `base_url` stays
+    # the configured value; only the AsyncClient kwarg is normalised.
+    base_url = resolve_base_url(slice_).rstrip("/")
     if base_url.endswith("/wiki"):
         base_url = base_url[: -len("/wiki")]
-    # Atlassian Cloud Basic auth username is the account email. The platform
-    # reference (server.dev.yaml + env_resolver.env_confluence_x) reads it from
-    # CONFLUENCE_USERNAME; older docs use CONFLUENCE_EMAIL. Accept either.
-    username = optional_env("CONFLUENCE_USERNAME", "") or require_env("CONFLUENCE_EMAIL")
-    return AsyncClient(**_kwargs_with_proxy({
+    return AsyncClient(**with_proxy_kwargs({
         "base_url": base_url,
-        "auth": BasicAuth(username, require_env("CONFLUENCE_API_TOKEN")),
-        "headers": {
-            "accept": "application/json",
-            "content-type": "application/json",
-            "x-atlassian-token": "no-check",
-        },
+        "auth":     resolve_auth(slice_),
+        "headers":  resolve_static_headers(slice_),
     }))
 
 
 async def make_github_client() -> AsyncClient:
-    return AsyncClient(**_kwargs_with_proxy({
-        "base_url": optional_env("GITHUB_API_BASE_URL", "https://api.github.com"),
-        "auth": BearerAuth(require_env("GITHUB_TOKEN")),
-        "headers": {
-            "accept": "application/vnd.github+json",
-            "x-github-api-version": "2022-11-28",
-        },
+    slice_ = _slice("github")
+    return AsyncClient(**with_proxy_kwargs({
+        "base_url": resolve_base_url(slice_),
+        "auth":     resolve_auth(slice_),
+        "headers":  resolve_static_headers(slice_),
     }))
 
 
 async def make_figma_client() -> AsyncClient:
-    return AsyncClient(**_kwargs_with_proxy({
-        "base_url": optional_env("FIGMA_API_BASE_URL", "https://api.figma.com"),
-        "auth": APIKeyAuth(require_env("FIGMA_TOKEN"), "X-Figma-Token"),
-        "headers": {"accept": "application/json"},
+    slice_ = _slice("figma")
+    return AsyncClient(**with_proxy_kwargs({
+        "base_url": resolve_base_url(slice_),
+        "auth":     resolve_auth(slice_),
+        "headers":  resolve_static_headers(slice_),
     }))
 
 
 async def make_statsig_client() -> AsyncClient:
-    return AsyncClient(**_kwargs_with_proxy({
-        "base_url": optional_env("STATSIG_BASE_URL", "https://statsigapi.net/console/v1"),
-        "auth": APIKeyAuth(require_env("STATSIG_API_KEY"), "STATSIG-API-KEY"),
-        "headers": {"accept": "application/json"},
+    slice_ = _slice("statsig")
+    return AsyncClient(**with_proxy_kwargs({
+        "base_url": resolve_base_url(slice_),
+        "auth":     resolve_auth(slice_),
+        "headers":  resolve_static_headers(slice_),
     }))
 
 
 async def make_saucelabs_client() -> AsyncClient:
-    return AsyncClient(**_kwargs_with_proxy({
-        "base_url": optional_env("SAUCELABS_BASE_URL", "https://api.us-west-1.saucelabs.com"),
-        "auth": BasicAuth(require_env("SAUCE_USERNAME"), require_env("SAUCE_ACCESS_KEY")),
-        "headers": {"accept": "application/json"},
+    slice_ = _slice("saucelabs")
+    return AsyncClient(**with_proxy_kwargs({
+        "base_url": resolve_base_url(slice_),
+        "auth":     resolve_auth(slice_),
+        "headers":  resolve_static_headers(slice_),
     }))
 
 

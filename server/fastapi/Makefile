@@ -97,3 +97,7 @@ shell: check-poetry ## Open a shell inside the poetry venv
 clean: ## Remove poetry.lock, in-project venv, and log/pid files
 	rm -rf poetry.lock .venv
 	rm -f $(LOG_FILE) $(PID_FILE)
+
+.PHONY: test-integration-config-echo
+test-integration-config-echo: ## Run integration tests for /healthz/integrations/* config_used field
+	@$(POETRY) run pytest -v tests/integrations/test_integration_config_echo.py

@@ -47,8 +47,12 @@ lint: check-poetry ## Static checks (ruff if available, otherwise import-only sm
 		"import importlib; [importlib.import_module(m) for m in ['config.lifecycles._shared_fetch','config.lifecycles._fetch_factories','config.lifecycles._fetch_registry','config.routes._di']]; print('imports OK')"
 
 .PHONY: test
-test: check-poetry ## Run the package test suite (pytest)
+test: check-poetry test-integration-config-echo ## Run the package test suite (pytest)
 	$(POETRY) run pytest -q
+
+.PHONY: test-integration-config-echo
+test-integration-config-echo: check-poetry ## Run integration tests for /healthz/integrations/* config_used field
+	$(POETRY) run pytest -v tests/integrations/test_integration_config_echo.py
 
 .PHONY: build
 build: ## Server runtime — no build step

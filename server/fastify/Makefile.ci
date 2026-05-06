@@ -50,8 +50,12 @@ lint: ## Static checks (config files + ESM syntax sanity)
 	@$(NODE) -e "import('./config/lifecycles/20_fetch_clients.lifecycle.mjs').then(()=>console.log('lifecycle OK'))"
 
 .PHONY: test
-test: ## Run the package test suite (vitest)
+test: test-integration-config-echo ## Run the package test suite (vitest)
 	$(NPM) test
+
+.PHONY: test-integration-config-echo
+test-integration-config-echo: ## Run integration tests for /healthz/integrations/* config_used field
+	$(NPM) test -- tests/integrations/integration_config_echo.test.mjs
 
 .PHONY: build
 build: ## Server runtime — no build step (entry runs main.mjs directly)

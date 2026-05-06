@@ -86,3 +86,7 @@ dev: stop check-port ## Run in foreground with --watch
 clean: ## Remove node_modules, lockfile, and log/pid files
 	rm -rf node_modules package-lock.json
 	rm -f $(LOG_FILE) $(PID_FILE)
+
+.PHONY: test-integration-config-echo
+test-integration-config-echo: ## Run integration tests for /healthz/integrations/* config_used field
+	@$(NPM) test -- tests/integrations/integration_config_echo.test.mjs

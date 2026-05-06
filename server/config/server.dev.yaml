@@ -309,7 +309,9 @@ providers:
       endpoint_api_key: "{{fn:provider_api_keys.openai_embeddings}}"
 
   figma:
-    base_url: "https://api.figma.com/v1"
+    # base_url is supplied by overwrite_from_context (env-driven with literal
+    # default) so the AsyncClient factory can be 100% yaml-driven. The route
+    # path `/v1/me` is appended at request time, hence base_url has no `/v1`.
     health_endpoint: "/me"
     endpoint_auth_type: "custom"             # Figma uses custom X-Figma-Token header
     api_auth_header_name: "X-Figma-Token"    # Required for dynamic resolution of custom auth
@@ -318,14 +320,19 @@ providers:
     proxy_url: false  # Disabled - no proxy running
     headers:
       Accept: "application/json"
+      X-Request-Id: null
     overwrite_from_context:
+      base_url: "{{env.FIGMA_API_BASE_URL | 'https://api.figma.com'}}"
       endpoint_api_key: "{{fn:provider_api_keys.figma}}"
+      headers:
+        X-Request-Id: "{{request.headers.x-request-id}}"
       # proxy_url: "https://api.localhost.com"
       # proxy_url: "{{env.FIGMA_PROXY_URL}}"  # Disabled — when FIGMA_PROXY_URL unset, resolves to null and overrides proxy_url:false
 
     
   github:
-    base_url: "https://api.github.com"
+    # base_url is supplied by overwrite_from_context (env-driven with literal
+    # default) so the AsyncClient factory can be 100% yaml-driven.
     health_endpoint: "/user"
     endpoint_api_key: null
     endpoint_auth_type: "bearer"
@@ -335,9 +342,12 @@ providers:
       Accept: "application/vnd.github+json"
       X-GitHub-Api-Version: "2022-11-28"
       User-Agent: "MTA-FetchClient"
+      X-Request-Id: null
     overwrite_from_context:
+      base_url: "{{env.GITHUB_API_BASE_URL | 'https://api.github.com'}}"
       endpoint_api_key: "{{fn:provider_api_keys.github}}"
-      # base_url: "{{env.GITHUB_API_BASE_URL}}"  # Disabled — when GITHUB_API_BASE_URL unset, resolves to null and overrides base_url default
+      headers:
+        X-Request-Id: "{{request.headers.x-request-id}}"
 
   jira:
     base_url: null
@@ -349,10 +359,13 @@ providers:
     headers:
       Content-Type: "application/json"
       Accept: "application/json"
+      X-Request-Id: null
     overwrite_from_context:
       base_url: "{{env.JIRA_BASE_URL}}"
       email: "{{env.JIRA_EMAIL}}"
       endpoint_api_key: "{{fn:provider_api_keys.jira}}"
+      headers:
+        X-Request-Id: "{{request.headers.x-request-id}}"
 
   confluence:
     base_url: null
@@ -368,22 +381,31 @@ providers:
       Content-Type: "application/json"
       Accept: "application/json"
       X-Atlassian-Token: "no-check"  # Required for write operations (CSRF protection)
+      X-Request-Id: null
     overwrite_from_context:
       base_url: "{{env.CONFLUENCE_BASE_URL}}"
       email: "{{env.CONFLUENCE_EMAIL}}"
       endpoint_api_key: "{{fn:provider_api_keys.confluence}}"
+      headers:
+        X-Request-Id: "{{request.headers.x-request-id}}"
 
   saucelabs:
-    base_url: "https://api.us-west-1.saucelabs.com"
+    # base_url is supplied by overwrite_from_context (env-driven with literal
+    # default) so the AsyncClient factory can be 100% yaml-driven.
     username: null
     endpoint_api_key: null
     health_endpoint: "/rest/v1/users/:username"
     endpoint_auth_type: "basic"           # SauceLabs uses Basic auth with username:access_key
     endpoint_auth_token_resolver: "static"
     proxy_url: false  # Disabled - no proxy running
+    headers:
+      X-Request-Id: null
     overwrite_from_context:
+      base_url: "{{env.SAUCELABS_BASE_URL | 'https://api.us-west-1.saucelabs.com'}}"
       username: "{{env.SAUCE_USERNAME}}"
       endpoint_api_key: "{{fn:provider_api_keys.saucelabs}}"
+      headers:
+        X-Request-Id: "{{request.headers.x-request-id}}"
 
   # ServiceNow
   servicenow:
@@ -415,14 +437,20 @@ providers:
         ZSESSIONID: "{{fn:provider_api_keys.rally}}"
 
   statsig:
-    base_url: "https://statsigapi.net/console/v1"
+    # base_url is supplied by overwrite_from_context (env-driven with literal
+    # default) so the AsyncClient factory can be 100% yaml-driven.
     health_endpoint: "/gates"
     endpoint_api_key: null
     endpoint_auth_type: "custom_header"
     api_auth_header_name: "statsig-api-key"
     proxy_url: false  # Disabled - no proxy running
+    headers:
+      X-Request-Id: null
     overwrite_from_context:
+      base_url: "{{env.STATSIG_BASE_URL | 'https://statsigapi.net/console/v1'}}"
       endpoint_api_key: "{{fn:provider_api_keys.statsig}}"
+      headers:
+        X-Request-Id: "{{request.headers.x-request-id}}"
 
   sonar:
     base_url: "https://sonarcloud.io"  # or https://your-sonar.example.com for SonarQube

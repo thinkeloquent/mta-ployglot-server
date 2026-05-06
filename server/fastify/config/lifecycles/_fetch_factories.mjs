@@ -1,76 +1,96 @@
+/**
+ * Per-provider factories returning configured AsyncClient instances.
+ *
+ * Each `make<Provider>Client` reads its slice from the post-pipeline
+ * `getConfig().providers[<name>]` and composes an AsyncClient via the
+ * shared helpers in `_shared_fetch.mjs`. The yaml is the single source
+ * of truth for base URLs, auth tokens (resolved at boot via
+ * `{{fn:provider_api_keys.<name>}}`), credentials (`email` / `username`),
+ * and static headers — no env reads here.
+ *
+ * Pattern B: factories stay separate, named functions for greppability;
+ * shared logic lives in helpers; provider-specific quirks
+ * (e.g. confluence's `/wiki` strip) stay visible inline.
+ */
+import { getConfig } from "@ployglot/app-yaml-fetch-config";
+import { AsyncClient } from "@polyglot/fetch-http-client";
 import {
-  AsyncClient,
-  BasicAuth,
-  BearerAuth,
-  APIKeyAuth,
-} from "@polyglot/fetch-http-client";
-import { buildProxy, optionalEnv, requireEnv } from "./_shared_fetch.mjs";
+  resolveAuth,
+  resolveBaseUrl,
+  resolveStaticHeaders,
+  withProxyKwargs,
+} from "./_shared_fetch.mjs";
 
-function withProxy(opts) {
-  const proxy = buildProxy({});
-  return proxy ? { ...opts, proxy } : opts;
+function sliceFor(name) {
+  const cfg = getConfig();
+  const slice = cfg?.providers?.[name];
+  if (!slice) {
+    throw new Error(
+      `cfg.providers.${name} is missing; check server.dev.yaml and slot 29 wiring`,
+    );
+  }
+  return slice;
 }
 
 export function makeJiraClient() {
-  return new AsyncClient(withProxy({
-    baseUrl: requireEnv("JIRA_BASE_URL"),
-    auth: new BasicAuth(requireEnv("JIRA_EMAIL"), requireEnv("JIRA_API_TOKEN")),
-    headers: { accept: "application/json" },
+  const slice = sliceFor("jira");
+  return new AsyncClient(withProxyKwargs({
+    baseUrl: resolveBaseUrl(slice),
+    auth:    resolveAuth(slice),
+    headers: resolveStaticHeaders(slice),
   }));
 }
 
 export function makeConfluenceClient() {
-  // Strip a trailing `/wiki` (and any trailing slash) from the env so route paths
-  // can carry the full `/wiki/rest/api/...` prefix without double-prefixing
-  // when CONFLUENCE_BASE_URL is set to `https://<tenant>.atlassian.net/wiki`.
-  const baseUrl = requireEnv("CONFLUENCE_BASE_URL").replace(/\/wiki\/?$/, "").replace(/\/$/, "");
-  // Atlassian Cloud Basic auth username is the account email. The platform
-  // reference (server.dev.yaml + env_resolver.env_confluence_x) reads it from
-  // CONFLUENCE_USERNAME; older docs use CONFLUENCE_EMAIL. Accept either.
-  const username = optionalEnv("CONFLUENCE_USERNAME", "") || requireEnv("CONFLUENCE_EMAIL");
-  return new AsyncClient(withProxy({
+  const slice = sliceFor("confluence");
+  // Strip a trailing `/wiki` (and any trailing slash) from the resolved
+  // base_url so route paths can carry the full `/wiki/rest/api/...`
+  // prefix without double-prefixing when the yaml-resolved value is
+  // `https://<tenant>.atlassian.net/wiki`. The yaml `base_url` stays
+  // the configured value; only the AsyncClient kwarg is normalised.
+  const baseUrl = resolveBaseUrl(slice)
+    .replace(/\/wiki\/?$/, "")
+    .replace(/\/$/, "");
+  return new AsyncClient(withProxyKwargs({
     baseUrl,
-    auth: new BasicAuth(username, requireEnv("CONFLUENCE_API_TOKEN")),
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-      "x-atlassian-token": "no-check",
-    },
+    auth:    resolveAuth(slice),
+    headers: resolveStaticHeaders(slice),
   }));
 }
 
 export function makeGithubClient() {
-  return new AsyncClient(withProxy({
-    baseUrl: optionalEnv("GITHUB_API_BASE_URL", "https://api.github.com"),
-    auth: new BearerAuth(requireEnv("GITHUB_TOKEN")),
-    headers: {
-      accept: "application/vnd.github+json",
-      "x-github-api-version": "2022-11-28",
-    },
+  const slice = sliceFor("github");
+  return new AsyncClient(withProxyKwargs({
+    baseUrl: resolveBaseUrl(slice),
+    auth:    resolveAuth(slice),
+    headers: resolveStaticHeaders(slice),
   }));
 }
 
 export function makeFigmaClient() {
-  return new AsyncClient(withProxy({
-    baseUrl: optionalEnv("FIGMA_API_BASE_URL", "https://api.figma.com"),
-    auth: new APIKeyAuth(requireEnv("FIGMA_TOKEN"), "X-Figma-Token"),
-    headers: { accept: "application/json" },
+  const slice = sliceFor("figma");
+  return new AsyncClient(withProxyKwargs({
+    baseUrl: resolveBaseUrl(slice),
+    auth:    resolveAuth(slice),
+    headers: resolveStaticHeaders(slice),
   }));
 }
 
 export function makeStatsigClient() {
-  return new AsyncClient(withProxy({
-    baseUrl: optionalEnv("STATSIG_BASE_URL", "https://statsigapi.net/console/v1"),
-    auth: new APIKeyAuth(requireEnv("STATSIG_API_KEY"), "STATSIG-API-KEY"),
-    headers: { accept: "application/json" },
+  const slice = sliceFor("statsig");
+  return new AsyncClient(withProxyKwargs({
+    baseUrl: resolveBaseUrl(slice),
+    auth:    resolveAuth(slice),
+    headers: resolveStaticHeaders(slice),
   }));
 }
 
 export function makeSaucelabsClient() {
-  return new AsyncClient(withProxy({
-    baseUrl: optionalEnv("SAUCELABS_BASE_URL", "https://api.us-west-1.saucelabs.com"),
-    auth: new BasicAuth(requireEnv("SAUCE_USERNAME"), requireEnv("SAUCE_ACCESS_KEY")),
-    headers: { accept: "application/json" },
+  const slice = sliceFor("saucelabs");
+  return new AsyncClient(withProxyKwargs({
+    baseUrl: resolveBaseUrl(slice),
+    auth:    resolveAuth(slice),
+    headers: resolveStaticHeaders(slice),
   }));
 }
 

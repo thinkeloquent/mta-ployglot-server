@@ -1,10 +1,31 @@
+import { getConfig } from "@ployglot/app-yaml-fetch-config";
+import { buildEcho } from "../lifecycles/_provider_config_echo.mjs";
+
 export default async function saucelabsRoutes(fastify, _config) {
   fastify.get("/healthz/integrations/saucelabs/rest/v1/user", async (request, reply) => {
-    const user = process.env.SAUCE_USERNAME;
+    const cfg = getConfig();
+    const slice = cfg?.providers?.saucelabs ?? {};
+    const host = slice.base_url ?? "";
+    const user = slice.username;
+    let config_used = null;
+    try {
+      config_used = await buildEcho({
+        provider: "saucelabs",
+        request,
+        cfg,
+        resolver: request.runtime_template_resolver,
+        trigger: "OnRequest",
+      });
+    } catch {
+      config_used = null;
+    }
     if (!user) {
-      return reply
-        .code(502)
-        .send({ service: "saucelabs", connected: false, error: "Missing env SAUCE_USERNAME" });
+      return reply.code(502).send({
+        service: "saucelabs",
+        connected: false,
+        error: "Missing cfg.providers.saucelabs.username (set SAUCE_USERNAME)",
+        config_used,
+      });
     }
     const client = await request.fetchClient("saucelabs");
     try {
@@ -18,19 +39,26 @@ export default async function saucelabsRoutes(fastify, _config) {
           connected: false,
           upstream_status: upstream.status_code,
           upstream_body: body.slice(0, 512),
+          config_used,
         });
       }
       const data = await upstream.json();
       return {
         service: "saucelabs",
         connected: true,
-        host: process.env.SAUCELABS_BASE_URL ?? "https://api.us-west-1.saucelabs.com",
+        host,
         user,
         org_vms: data?.concurrency?.organization?.allowed?.vms ?? null,
         team_vms: data?.concurrency?.team?.allowed?.vms ?? null,
+        config_used,
       };
     } catch (err) {
-      return reply.code(502).send({ service: "saucelabs", connected: false, error: err.message });
+      return reply.code(502).send({
+        service: "saucelabs",
+        connected: false,
+        error: err.message,
+        config_used,
+      });
     }
   });
 }
