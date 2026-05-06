@@ -58,6 +58,13 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install check-jsonschema
+        # bootstrap.sh -> scripts/workspace/validate.sh validates workspace.toml
+        # against its JSON schema; without this, validate.sh exits 127.
+        run: |
+          pipx install check-jsonschema
+          check-jsonschema --version
+
       - name: Hydrate siblings + doctor
         run: |
           export WORKSPACE_OVERRIDE_ROOT="$RUNNER_TEMP/siblings"

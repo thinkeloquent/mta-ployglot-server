@@ -45,13 +45,17 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install pip-audit
+      - name: Install pip-audit + check-jsonschema
         # security-scan needs pip-audit for the FastAPI dep audit. With CI=1
         # set on the make calls below, security-scan hard-fails when pip-audit
         # is absent — install it here so the gate can do its job.
+        # check-jsonschema is required by scripts/workspace/validate.sh, which
+        # bootstrap.sh invokes to validate workspace.toml against its schema.
         run: |
           pipx install pip-audit
+          pipx install check-jsonschema
           pip-audit --version
+          check-jsonschema --version
 
       - name: Bootstrap workspace (hydrate siblings)
         # bootstrap.sh hydrate clones every sibling under WORKSPACE_OVERRIDE_ROOT
