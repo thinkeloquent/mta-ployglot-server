@@ -51,6 +51,9 @@ include Makefile.devmode
 # Dependency-state reset: clean-locks / clean-install-cache / clean-deps.
 -include Makefile.clean
 
+# Single-repo git ops: git-pull (clean + fetch + hard-reset).
+-include Makefile.git
+
 # ---------------------------------------------------------------------------
 # aggregators
 # ---------------------------------------------------------------------------
