@@ -29,6 +29,11 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          # GH_PAT must have contents:read on this repo AND on every private
+          # repo referenced from .gitmodules (e.g. mta-ployglot-agentfiles-claude).
+          # The default GITHUB_TOKEN cannot reach sibling private repos, so
+          # `submodules: recursive` would 404 without this override.
+          token: ${{ secrets.GH_PAT }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
