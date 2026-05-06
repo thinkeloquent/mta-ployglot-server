@@ -46,9 +46,12 @@ dev-install-fastify: ## Build bootstrap into .dev/fastify + stage server/fastify
 	  rsync -a --delete --exclude node_modules --exclude dist --exclude .smoke-logs \
 	    $(BOOTSTRAP_DIR)/fastify_server/ $(DEV_FASTIFY)/ || \
 	  cp -R $(BOOTSTRAP_DIR)/fastify_server/. $(DEV_FASTIFY)/
-	@# npm packages MUST come from Verdaccio at http://localhost:4873/. The
-	@# upstream lockfile already resolves to that registry, so `npm ci` will
-	@# fail-loud if Verdaccio isn't running — start it before invoking dev.
+	@# npm packages come from $(NPM_REGISTRY) (Makefile.vars; default Verdaccio
+	@# at http://localhost:4873). The upstream lockfile's `resolved` URLs were
+	@# written against that registry, so `npm ci` will fail-loud if it's
+	@# unreachable — start the registry before invoking dev, or override via
+	@# `NPM_REGISTRY=https://registry.npmjs.org make dev-install`. The
+	@# exported NPM_CONFIG_REGISTRY env var is what npm actually reads.
 	cd $(DEV_FASTIFY) && npm ci --no-audit --no-fund
 	cd $(DEV_FASTIFY) && npm run build
 	@# Stage the standalone app (server/fastify) into .dev/fastify-app. Per

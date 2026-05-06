@@ -30,12 +30,16 @@ COPY ployglots/mta-ployglot-server-bootstrap/fastify_server/package.json \
      ployglots/mta-ployglot-server-bootstrap/fastify_server/tsconfig.json \
      ./
 
-# npm packages MUST come from Verdaccio at http://localhost:4873/ — the URL
-# the upstream lockfile already resolves to. To build in a network where
-# Verdaccio is unreachable (e.g. a GitHub Actions runner), override at
-# build-time:
+# npm registry — SSOT is `Makefile.vars NPM_REGISTRY`. The Make-driven path
+# (`make docker-install` / `make ci-install` / `make build`) passes the
+# value through as `--build-arg NPM_REGISTRY=...`. The default below mirrors
+# Makefile.vars and is only consulted when this Dockerfile is built RAW
+# (direct `docker build ...` outside the Makefile). If you change one, change
+# the other so the two defaults stay in lockstep.
 #
-#   docker build --build-arg NPM_REGISTRY=<alt-registry-url> ...
+# Override examples:
+#   make docker-install NPM_REGISTRY=https://registry.npmjs.org
+#   docker build --build-arg NPM_REGISTRY=https://registry.npmjs.org ...
 #
 # Integrity hashes (sha512) in the lockfile are registry-independent, so
 # swapping the URL preserves determinism. Default is a no-op rewrite.
