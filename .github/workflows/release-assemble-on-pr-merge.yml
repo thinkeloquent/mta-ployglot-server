@@ -61,7 +61,7 @@ jobs:
       - name: Hydrate siblings + doctor
         run: |
           export WORKSPACE_OVERRIDE_ROOT="$RUNNER_TEMP/siblings"
-          ./scripts/workspace/bootstrap.sh hydrate
+          ./scripts/workspace/bootstrap.sh
           make doctor
 
       - name: Subtree pull at sibling HEADs (writes /tmp/snapshot.jsonl)
