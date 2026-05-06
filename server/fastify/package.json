@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "fastify-server": "file:../../ployglots/mta-ployglot-server-bootstrap/fastify_server",
-    "@mta/print-routes-fastify": "file:../../../mta-ployglot-server-print-routes/packages/mjs",
+    "@mta/print-routes-fastify": "file:../../ployglots/mta-ployglot-server-print-routes/packages/mjs",
     "fastify-plugin": "^5.0.0",
     "@polyglot/fetch-http-client": "file:../../ployglots/mta-ployglot-pkg-fetch-client/packages/ts",
     "@org/env-resolve": "file:../../ployglots/mta-ployglot-pkg-env-resolve/packages/ts",

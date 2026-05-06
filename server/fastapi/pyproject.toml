@@ -9,7 +9,7 @@ package-mode = false
 [tool.poetry.dependencies]
 python = ">=3.11.4,<3.12"
 thinkeloquent-fastapi-server = { path = "../../ployglots/mta-ployglot-server-bootstrap/fastapi_server", develop = true }
-print-routes-fastapi = { path = "../../../mta-ployglot-server-print-routes/packages/py", develop = true }
+print-routes-fastapi = { path = "../../ployglots/mta-ployglot-server-print-routes/packages/py", develop = true }
 polyglot-fetch-http-client = { path = "../../ployglots/mta-ployglot-pkg-fetch-client/packages/py", develop = true }
 env-resolve = { path = "../../ployglots/mta-ployglot-pkg-env-resolve/packages/py", develop = true }
 app-yaml-loader = { path = "../../ployglots/mta-ployglot-pkg-app-yaml-loader/packages/py", develop = true }
