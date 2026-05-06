@@ -48,6 +48,9 @@ include Makefile.devmode
 -include Makefile.health
 -include Makefile.servers-ci
 
+# Dependency-state reset: clean-locks / clean-install-cache / clean-deps.
+-include Makefile.clean
+
 # ---------------------------------------------------------------------------
 # aggregators
 # ---------------------------------------------------------------------------
