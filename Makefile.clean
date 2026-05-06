@@ -37,20 +37,28 @@ CLEAN_LOCK_NAMES := \
 
 # Prune list — paths whose contents must NEVER be deleted by clean-locks:
 #   node_modules/.venv  : package-manager internals (their own caches own them)
-#   ployglots/          : sibling source trees (each sibling owns its own clean)
 #   scripts/workspace/orchestrator/tests/fixtures/ : test fixtures with a
 #                         literal `workspace.toml.lock.json` that asserts
 #                         emitter output — deleting it breaks orchestrator tests.
+#
+# Note: `ployglots/<sibling>` is INTENTIONALLY NOT pruned. Every entry there
+# is a symlink to `../../mta-ployglot-*/`; with `find -L` below the sweep
+# descends through the symlink and removes lock files in the sibling source
+# tree (e.g. ployglots/mta-ployglot-pkg-vault/package-lock.json → resolves to
+# ../../mta-ployglot-pkg-vault/package-lock.json). That's the documented
+# behavior — devmode wires siblings via symlink, so a single `make clean-locks`
+# from the orchestration shell wipes them all.
 CLEAN_LOCK_PRUNES := \
   -path '*/node_modules' -o \
   -path '*/.venv' -o \
-  -path '$(ROOT_DIR)/ployglots' -o \
   -path '$(ROOT_DIR)/scripts/workspace/orchestrator/tests/fixtures'
 
 .PHONY: clean-locks
-clean-locks: ## Remove dependency lock files recursively (next install re-resolves versions)
+clean-locks: ## Remove dependency lock files recursively (incl. symlinked siblings under ployglots/)
 	@# (1) Recursive sweep for the well-known lock-file names. Build the
 	@# `-name X -o -name Y …` predicate dynamically from CLEAN_LOCK_NAMES.
+	@# `find -L` follows symlinks so the per-sibling `ployglots/<name>`
+	@# entries get descended into and their lock files swept.
 	@name_expr=""; for n in $(CLEAN_LOCK_NAMES); do \
 	  if [ -z "$$name_expr" ]; then name_expr="-name $$n"; \
 	  else name_expr="$$name_expr -o -name $$n"; fi; \
@@ -59,7 +67,7 @@ clean-locks: ## Remove dependency lock files recursively (next install re-resolv
 	while IFS= read -r f; do \
 	  [ -z "$$f" ] && continue; \
 	  echo "==> rm $$f"; rm -f "$$f"; count=$$((count+1)); \
-	done < <(find $(ROOT_DIR) \
+	done < <(find -L $(ROOT_DIR) \
 	    \( $(CLEAN_LOCK_PRUNES) \) -prune \
 	    -o -type f \( $$name_expr \) -print 2>/dev/null); \
 	echo "==> $$count lock file(s) cleaned"
