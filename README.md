@@ -1,4 +1,4 @@
-# mta-ployglot-server
+# mta-ployglot-server v1
 
 Orchestration shell for a polyglot meta-repo. It hydrates a registry of sibling
 repos into a local symlink topology, generates per-language workspace manifests
