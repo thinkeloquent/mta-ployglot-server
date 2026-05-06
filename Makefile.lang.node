@@ -1,52 +1,62 @@
-# Makefile.lang.node — Node toolchain wrappers (pnpm-first, npm-fallback).
+# Makefile.lang.node — Node toolchain wrappers (pnpm).
 #
 # Iterates `$(NODE_PKGS)` from Makefile.entries (registry-driven). On a
-# machine without pnpm or npm, every target degrades to a `skip:` log line
-# rather than failing — this fragment is a no-op for environments without
-# Node tooling.
+# machine without pnpm, every target degrades to a `skip:` log line rather
+# than failing — this fragment is a no-op for environments without Node
+# tooling.
+#
+# `node.preinstall` is a customizable hook that runs before every install
+# target — drop `pnpm config …` commands in there to wire up registry
+# auth, store dirs, etc. Default body is a no-op.
 #
 # Each recipe is a single shell invocation (multi-line via `\`) so that an
 # early-return `exit 0` from a guard actually returns from the recipe.
 
-NODE_TOOL ?= $(shell command -v pnpm 2>/dev/null || command -v npm 2>/dev/null)
+PNPM ?= $(shell command -v pnpm 2>/dev/null)
 
-.PHONY: node.install node.ci-install node.lint node.test node.build node.clean node.ci
+.PHONY: node.preinstall node.install node.ci-install node.lint node.test node.build node.clean node.ci
 
-node.install: ## (node) install deps for every Node sibling
-	@if [ -z "$(NODE_TOOL)" ]; then echo "skip: no pnpm/npm on PATH"; exit 0; fi; \
+node.preinstall: ## (node) pre-install hook — add `pnpm config …` commands here
+	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi
+	@# Customize this recipe with `pnpm config` commands needed before
+	@# `pnpm install`. Examples:
+	@#   $(PNPM) config set registry https://registry.example.com/
+	@#   $(PNPM) config set cafile $$NODE_EXTRA_CA_CERTS
+	@#   $(PNPM) config set store-dir $(HOME)/.pnpm-store
+	@#   $(PNPM) config set //registry.example.com/:_authToken $$NPM_TOKEN
+	@:
+
+node.install: node.preinstall ## (node) install deps for every Node sibling (pnpm install)
+	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
 	if [ -z "$(NODE_PKGS)" ]; then echo "skip: NODE_PKGS empty"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
-	  echo "==> $$p"; (cd $(ROOT_DIR)/$$p && $(NODE_TOOL) install); \
+	  echo "==> $$p"; (cd $(ROOT_DIR)/$$p && $(PNPM) install); \
 	done
 
-node.ci-install: ## (node) deterministic CI install (frozen-lockfile under pnpm; npm ci otherwise)
-	@if [ -z "$(NODE_TOOL)" ]; then echo "skip: no pnpm/npm on PATH"; exit 0; fi; \
+node.ci-install: node.preinstall ## (node) deterministic CI install (pnpm install --frozen-lockfile)
+	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
 	if [ -z "$(NODE_PKGS)" ]; then echo "skip: NODE_PKGS empty"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
 	  echo "==> $$p"; \
-	  if [ "$$(basename $(NODE_TOOL))" = "pnpm" ]; then \
-	    (cd $(ROOT_DIR)/$$p && $(NODE_TOOL) install --frozen-lockfile); \
-	  else \
-	    (cd $(ROOT_DIR)/$$p && $(NODE_TOOL) ci --no-audit --no-fund); \
-	  fi; \
+	  (cd $(ROOT_DIR)/$$p && $(PNPM) install --frozen-lockfile); \
 	done
 
 node.lint: ## (node) per-package lint (graceful skip if no `lint` script)
-	@if [ -z "$(NODE_TOOL)" ]; then echo "skip: no pnpm/npm on PATH"; exit 0; fi; \
+	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
-	  (cd $(ROOT_DIR)/$$p && $(NODE_TOOL) run lint --if-present 2>/dev/null) || true; \
+	  (cd $(ROOT_DIR)/$$p && $(PNPM) run lint --if-present 2>/dev/null) || true; \
 	done
 
 node.test: ## (node) per-package test (graceful skip if no `test` script)
-	@if [ -z "$(NODE_TOOL)" ]; then echo "skip: no pnpm/npm on PATH"; exit 0; fi; \
+	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
-	  (cd $(ROOT_DIR)/$$p && $(NODE_TOOL) test --if-present 2>/dev/null) || true; \
+	  (cd $(ROOT_DIR)/$$p && $(PNPM) run test --if-present 2>/dev/null) || true; \
 	done
 
 node.build: ## (node) per-package build (graceful skip if no `build` script)
-	@if [ -z "$(NODE_TOOL)" ]; then echo "skip: no pnpm/npm on PATH"; exit 0; fi; \
+	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
-	  (cd $(ROOT_DIR)/$$p && $(NODE_TOOL) run build --if-present 2>/dev/null) || true; \
+	  (cd $(ROOT_DIR)/$$p && $(PNPM) run build --if-present 2>/dev/null) || true; \
 	done
 
 node.clean: ## (node) remove node_modules and dist from every Node sibling

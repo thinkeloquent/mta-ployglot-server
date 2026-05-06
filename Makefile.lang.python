@@ -1,39 +1,43 @@
-# Makefile.lang.python — Python toolchain wrappers (uv-first, pip-fallback).
+# Makefile.lang.python — Python toolchain wrappers (poetry).
 #
-# Iterates `$(PY_PKGS)` from Makefile.entries. Project memory note: uv is the
-# preferred tool. Without uv (or pip), every target degrades to a `skip:`
-# message rather than failing the build.
+# Iterates `$(PY_PKGS)` from Makefile.entries. Without poetry on PATH every
+# target degrades to a `skip:` log line rather than failing the build.
+#
+# `py.preinstall` is a customizable hook that runs before every install
+# target — drop `poetry config …` commands in there to wire up registry
+# auth, in-project venvs, etc. Default body is a no-op.
 #
 # Each recipe is a single shell invocation (multi-line via `\`) so that an
 # early-return `exit 0` from a guard actually returns from the recipe.
 
-PY_TOOL ?= $(shell command -v uv 2>/dev/null || command -v pip 2>/dev/null)
-PYTEST  ?= $(PYTHON) -m pytest
+POETRY ?= $(shell command -v poetry 2>/dev/null)
+PYTEST ?= $(PYTHON) -m pytest
 
-.PHONY: py.install py.ci-install py.lint py.test py.build py.clean py.ci
+.PHONY: py.preinstall py.install py.ci-install py.lint py.test py.build py.clean py.ci
 
-py.install: ## (python) install deps for every Python sibling
-	@if [ -z "$(PY_TOOL)" ]; then echo "skip: no uv/pip on PATH"; exit 0; fi; \
+py.preinstall: ## (python) pre-install hook — add `poetry config …` commands here
+	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi
+	@# Customize this recipe with `poetry config` commands needed before
+	@# `poetry install`. Examples:
+	@#   $(POETRY) config virtualenvs.in-project true
+	@#   $(POETRY) config repositories.private $(PYTHON_REGISTRY_URL)
+	@#   $(POETRY) config http-basic.private $$PYPI_USER $$PYPI_PASS
+	@:
+
+py.install: py.preinstall ## (python) install deps for every Python sibling (poetry install)
+	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
 	if [ -z "$(PY_PKGS)" ]; then echo "skip: PY_PKGS empty"; exit 0; fi; \
 	for p in $(PY_PKGS); do \
 	  echo "==> $$p"; \
-	  if [ "$$(basename $(PY_TOOL))" = "uv" ]; then \
-	    (cd $(ROOT_DIR)/$$p && uv sync); \
-	  else \
-	    (cd $(ROOT_DIR)/$$p && pip install -e .); \
-	  fi; \
+	  (cd $(ROOT_DIR)/$$p && $(POETRY) install); \
 	done
 
-py.ci-install: ## (python) deterministic CI install (frozen lockfile under uv)
-	@if [ -z "$(PY_TOOL)" ]; then echo "skip: no uv/pip on PATH"; exit 0; fi; \
+py.ci-install: py.preinstall ## (python) deterministic CI install (poetry install --sync --no-interaction)
+	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
 	if [ -z "$(PY_PKGS)" ]; then echo "skip: PY_PKGS empty"; exit 0; fi; \
 	for p in $(PY_PKGS); do \
 	  echo "==> $$p"; \
-	  if [ "$$(basename $(PY_TOOL))" = "uv" ]; then \
-	    (cd $(ROOT_DIR)/$$p && uv sync --frozen); \
-	  else \
-	    (cd $(ROOT_DIR)/$$p && pip install -e .); \
-	  fi; \
+	  (cd $(ROOT_DIR)/$$p && $(POETRY) install --no-interaction --sync); \
 	done
 
 py.lint: ## (python) ruff (preferred) or flake8 — graceful when neither is installed
@@ -50,14 +54,10 @@ py.test: ## (python) pytest per sibling (graceful skip when no tests/ exists)
 	  fi; \
 	done
 
-py.build: ## (python) build wheel + sdist
-	@if [ -z "$(PY_TOOL)" ]; then echo "skip: no uv/pip on PATH"; exit 0; fi; \
+py.build: ## (python) build wheel + sdist (poetry build)
+	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
 	for p in $(PY_PKGS); do \
-	  if [ "$$(basename $(PY_TOOL))" = "uv" ]; then \
-	    (cd $(ROOT_DIR)/$$p && uv build); \
-	  else \
-	    (cd $(ROOT_DIR)/$$p && $(PYTHON) -m build); \
-	  fi; \
+	  (cd $(ROOT_DIR)/$$p && $(POETRY) build); \
 	done
 
 py.clean: ## (python) remove venvs, build artifacts, caches
