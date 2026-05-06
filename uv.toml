@@ -1,0 +1,16 @@
+# Project-wide uv config. Discovered automatically by every `uv` invocation
+# run from anywhere in this repo tree.
+#
+# python-preference = "only-system"
+#   Make uv use whatever Python the host already has installed and never
+#   download a managed interpreter. uv's default behavior fetches prebuilt
+#   CPython tarballs from astral-sh/python-build-standalone GitHub Releases,
+#   which are unreachable from the cloud / CI environments this repo deploys
+#   into. With this set:
+#     - local dev uses your pyenv / system Python (must be the version
+#       requested by the call site, e.g. 3.13 for `uv venv --python 3.13`)
+#     - cloud / CI uses the Python installed in the base image
+#       (python:3.13-slim or equivalent)
+#   To override for a one-off, run with `--python-preference managed` or
+#   `UV_PYTHON_PREFERENCE=managed`.
+python-preference = "only-system"
