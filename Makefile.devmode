@@ -38,8 +38,46 @@ dev-preflight: ## Abort early if node / npm / uv are missing
 	  exit 1; \
 	fi
 
+# ---------------------------------------------------------------------------
+# Sibling prebuild
+#
+# Every entry below is a TypeScript twin whose `package.json#main` points at
+# `dist/index.js`. Without a built dist, the symlinks created by
+# dev-install-fastify resolve to a package whose entry point doesn't exist,
+# and node fails at runtime on the first `import` of that package. Pure-mjs
+# siblings (packages/mjs, applier-mjs, engine-mjs) are NOT listed — they
+# consume sources directly with no build step.
+#
+# `make dev-prebuild-siblings` runs npm install + npm run build in each
+# present dir. Missing dirs are skipped gracefully (a sibling absent from the
+# checkout simply isn't built). Honors the same NPM_REGISTRY / lockfile
+# fallback as dev-install-fastify.
+# ---------------------------------------------------------------------------
+
+TS_PREBUILD_DIRS := \
+  $(ENV_RESOLVE_DIR)/packages/ts \
+  $(FETCH_CLIENT_DIR)/packages/ts \
+  $(ROOT_DIR)/ployglots/mta-ployglot-pkg-figma-api/packages/ts \
+  $(ROOT_DIR)/ployglots/mta-ployglot-pkg-vault/packages/ts
+
+.PHONY: dev-prebuild-siblings
+dev-prebuild-siblings: ## Build dist/ in every sibling ts twin (required before dev-install on fresh clones)
+	@for d in $(TS_PREBUILD_DIRS); do \
+	  if [ ! -d "$$d" ]; then echo "==> skip: $$d (not present)"; continue; fi; \
+	  echo "==> $$d"; \
+	  (cd "$$d" && \
+	    if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
+	    else echo "==> no package-lock.json — npm install (will write one)"; \
+	         npm install --no-audit --no-fund; fi && \
+	    npm run build) || exit $$?; \
+	done
+	@echo "==> sibling ts twins built"
+
+.PHONY: build-dist
+build-dist: dev-prebuild-siblings ## Alias for dev-prebuild-siblings — build dist/ in every sibling ts twin
+
 .PHONY: dev-install-fastify
-dev-install-fastify: ## Build bootstrap into .dev/fastify + stage server/fastify into .dev/fastify-app
+dev-install-fastify: dev-prebuild-siblings ## Build bootstrap into .dev/fastify + stage server/fastify into .dev/fastify-app
 	@test -d $(BOOTSTRAP_DIR)/fastify_server || { echo "submodule not initialized; run: make init"; exit 1; }
 	@mkdir -p $(DEV_FASTIFY)
 	@command -v rsync >/dev/null && \
