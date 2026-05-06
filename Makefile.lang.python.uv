@@ -1,0 +1,96 @@
+# Makefile.lang.python.uv — uv-based Python toolchain wrappers.
+#
+# Sibling fragment to Makefile.lang.python (poetry). Where the poetry fragment
+# iterates `$(PY_PKGS)` and runs `poetry install` per sibling, this fragment
+# provisions a SINGLE shared venv and editable-installs every sibling into it
+# — the same shape as `dev-install-fastapi` in Makefile.devmode, ported here so
+# it can be invoked independently of dev mode.
+#
+# Recipe shape mirrors the reference `install-py` (preinstall hooks → lock →
+# install --no-root). Translation table:
+#
+#   poetry config virtualenvs.in-project true   →  uv venv $(UV_VENV) --python $(UV_PYTHON)
+#   python .bin/pyproject-*.py                  →  $(MAKE) py.uv-preinstall  (graceful no-op)
+#   poetry lock                                 →  uv lock  (per sibling that owns a pyproject)
+#   poetry install --no-root -vv                →  uv pip install -e <each editable path>
+#
+# Without `uv` on PATH every target degrades to a `skip:` log line rather than
+# failing the build, mirroring the poetry fragment's no-toolchain behavior.
+#
+# `py.uv-preinstall` is a customizable hook that runs before every install
+# target — drop pyproject linters / fixers in there. Default body is a no-op.
+#
+# Each recipe is a single shell invocation (multi-line via `\`) so that an
+# early-return `exit 0` from a guard actually returns from the recipe.
+
+UV         ?= $(shell command -v uv 2>/dev/null)
+UV_PYTHON  ?= 3.13
+UV_VENV    ?= $(DEV_VENV)
+
+# Editable-install set: paths whose pyproject.toml the shared venv resolves
+# against. Mirrors `dev-install-fastapi` in Makefile.devmode. Override or
+# extend via the environment / make-line if you need a different set
+# (e.g. UV_EDITABLE_PKGS="ployglots/mta-ployglot-pkg-vault/packages/py" make py.uv-install).
+UV_EDITABLE_PKGS ?= \
+  $(BOOTSTRAP_DIR)/fastapi_server \
+  $(PRINT_ROUTES_DIR)/packages/py \
+  $(FETCH_CLIENT_DIR)/packages/py \
+  $(ENV_RESOLVE_DIR)/packages/py \
+  $(APP_YAML_LOADER_DIR)/packages/py \
+  $(APP_YAML_OVERWRITE_DIR)/packages/engine-py \
+  $(APP_YAML_OVERWRITE_DIR)/packages/applier-py \
+  $(APP_YAML_CONFIG_DIR)/packages/py \
+  $(APP_YAML_FETCH_CONFIG_DIR)/packages/py
+
+.PHONY: py.uv-preinstall py.uv-venv py.uv-lock py.uv-install py.uv-ci-install py.uv-clean
+
+py.uv-preinstall: ## (python/uv) pre-install hook — drop pyproject linters / fixers here
+	@if [ -z "$(UV)" ]; then echo "skip: no uv on PATH (install: curl -LsSf https://astral.sh/uv/install.sh | sh)"; exit 0; fi
+	@# Customize this recipe with pyproject linters / fixers needed before
+	@# `uv lock` / `uv pip install`. Examples (mirrors the reference shape):
+	@#   $(PYTHON) .bin/pyproject-lint-no-readme.py --fix || true
+	@#   $(PYTHON) .bin/fix_pytest_test_namespaces.py    || true
+	@#   $(PYTHON) .bin/pyproject-install-fix-versions.py
+	@#   $(PYTHON) .bin/pyproject-sync-pkg-repo.py
+	@:
+
+py.uv-venv: ## (python/uv) provision shared in-project venv at $(UV_VENV)
+	@if [ -z "$(UV)" ]; then echo "skip: no uv on PATH"; exit 0; fi; \
+	if [ -d "$(UV_VENV)" ]; then echo "==> $(UV_VENV) already present"; exit 0; fi; \
+	mkdir -p $(dir $(UV_VENV)); \
+	$(UV) venv $(UV_VENV) --python $(UV_PYTHON)
+
+py.uv-lock: py.uv-preinstall ## (python/uv) refresh uv.lock for every sibling pyproject in $(UV_EDITABLE_PKGS)
+	@if [ -z "$(UV)" ]; then echo "skip: no uv on PATH"; exit 0; fi; \
+	if [ -z "$(UV_EDITABLE_PKGS)" ]; then echo "skip: UV_EDITABLE_PKGS empty"; exit 0; fi; \
+	for p in $(UV_EDITABLE_PKGS); do \
+	  if [ ! -f "$$p/pyproject.toml" ]; then \
+	    echo "==> $$p (skip: no pyproject.toml)"; continue; \
+	  fi; \
+	  echo "==> $$p"; \
+	  (cd $$p && $(UV) lock) || exit $$?; \
+	done
+
+py.uv-install: py.uv-preinstall py.uv-venv ## (python/uv) editable-install every sibling into the shared $(UV_VENV)
+	@if [ -z "$(UV)" ]; then echo "skip: no uv on PATH"; exit 0; fi; \
+	if [ -z "$(UV_EDITABLE_PKGS)" ]; then echo "skip: UV_EDITABLE_PKGS empty"; exit 0; fi; \
+	missing=""; \
+	for p in $(UV_EDITABLE_PKGS); do \
+	  if [ ! -f "$$p/pyproject.toml" ]; then missing="$$missing $$p"; fi; \
+	done; \
+	if [ -n "$$missing" ]; then \
+	  echo "==> missing pyproject.toml in:$$missing"; \
+	  echo "    populate ployglots/ siblings (run: make init) before retrying"; \
+	  exit 1; \
+	fi; \
+	args=""; for p in $(UV_EDITABLE_PKGS); do args="$$args -e $$p"; done; \
+	$(UV) pip install --python $(UV_VENV)/bin/python $$args
+
+py.uv-ci-install: py.uv-preinstall py.uv-venv ## (python/uv) deterministic CI install (frozen lockfile)
+	@if [ -z "$(UV)" ]; then echo "skip: no uv on PATH"; exit 0; fi; \
+	if [ -z "$(UV_EDITABLE_PKGS)" ]; then echo "skip: UV_EDITABLE_PKGS empty"; exit 0; fi; \
+	args=""; for p in $(UV_EDITABLE_PKGS); do args="$$args -e $$p"; done; \
+	UV_LOCKED=1 $(UV) pip install --python $(UV_VENV)/bin/python $$args
+
+py.uv-clean: ## (python/uv) remove the shared $(UV_VENV)
+	rm -rf $(UV_VENV)

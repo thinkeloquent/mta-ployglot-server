@@ -28,6 +28,12 @@ py.install: py.preinstall ## (python) install deps for every Python sibling (poe
 	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
 	if [ -z "$(PY_PKGS)" ]; then echo "skip: PY_PKGS empty"; exit 0; fi; \
 	for p in $(PY_PKGS); do \
+	  if [ ! -f "$(ROOT_DIR)/$$p/pyproject.toml" ]; then \
+	    echo "==> $$p (skip: no top-level pyproject.toml)"; continue; \
+	  fi; \
+	  if grep -q '^\[tool\.uv\.workspace\]' "$(ROOT_DIR)/$$p/pyproject.toml" 2>/dev/null; then \
+	    echo "==> $$p (skip: uv workspace root, not a poetry project)"; continue; \
+	  fi; \
 	  echo "==> $$p"; \
 	  (cd $(ROOT_DIR)/$$p && $(POETRY) install); \
 	done
@@ -36,6 +42,12 @@ py.ci-install: py.preinstall ## (python) deterministic CI install (poetry instal
 	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
 	if [ -z "$(PY_PKGS)" ]; then echo "skip: PY_PKGS empty"; exit 0; fi; \
 	for p in $(PY_PKGS); do \
+	  if [ ! -f "$(ROOT_DIR)/$$p/pyproject.toml" ]; then \
+	    echo "==> $$p (skip: no top-level pyproject.toml)"; continue; \
+	  fi; \
+	  if grep -q '^\[tool\.uv\.workspace\]' "$(ROOT_DIR)/$$p/pyproject.toml" 2>/dev/null; then \
+	    echo "==> $$p (skip: uv workspace root, not a poetry project)"; continue; \
+	  fi; \
 	  echo "==> $$p"; \
 	  (cd $(ROOT_DIR)/$$p && $(POETRY) install --no-interaction --sync); \
 	done

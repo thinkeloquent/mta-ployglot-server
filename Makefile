@@ -38,6 +38,7 @@ include Makefile.devmode
 # missing, so it's safe to always include.
 -include Makefile.lang.node
 -include Makefile.lang.python
+-include Makefile.lang.python.uv
 -include Makefile.lang.go
 -include Makefile.lang.rust
 

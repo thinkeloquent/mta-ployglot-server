@@ -30,6 +30,9 @@ node.install: node.preinstall ## (node) install deps for every Node sibling (pnp
 	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
 	if [ -z "$(NODE_PKGS)" ]; then echo "skip: NODE_PKGS empty"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
+	  if [ ! -f "$(ROOT_DIR)/$$p/package.json" ]; then \
+	    echo "==> $$p (skip: no top-level package.json)"; continue; \
+	  fi; \
 	  echo "==> $$p"; (cd $(ROOT_DIR)/$$p && $(PNPM) install); \
 	done
 
@@ -37,6 +40,9 @@ node.ci-install: node.preinstall ## (node) deterministic CI install (pnpm instal
 	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
 	if [ -z "$(NODE_PKGS)" ]; then echo "skip: NODE_PKGS empty"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
+	  if [ ! -f "$(ROOT_DIR)/$$p/package.json" ]; then \
+	    echo "==> $$p (skip: no top-level package.json)"; continue; \
+	  fi; \
 	  echo "==> $$p"; \
 	  (cd $(ROOT_DIR)/$$p && $(PNPM) install --frozen-lockfile); \
 	done
