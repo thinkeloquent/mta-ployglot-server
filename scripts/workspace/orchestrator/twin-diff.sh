@@ -36,30 +36,37 @@ if [[ "$NO_RUNTIME" -eq 1 ]]; then
   fastapi_routes=$fastapi_routes_static
   routes_via=static
 else
-  # Try runtime; fall back to static per-twin if runtime emits nothing.
   fastify_runtime=$(twin_surface::routes_runtime fastify 2>/dev/null | jq -r '"\(.method) \(.path)"' | sort -u || true)
   fastapi_runtime=$(twin_surface::routes_runtime fastapi 2>/dev/null | jq -r '"\(.method) \(.path)"' | sort -u || true)
 
-  if [[ -n "$fastify_runtime" ]]; then
-    fastify_routes=$fastify_runtime
-  else
-    echo "WARN: fastify runtime emitter produced no routes — using static fallback" >&2
-    fastify_routes=$fastify_routes_static
-  fi
-  if [[ -n "$fastapi_runtime" ]]; then
-    fastapi_routes=$fastapi_runtime
-  else
-    echo "WARN: fastapi runtime emitter produced no routes — using static fallback" >&2
-    fastapi_routes=$fastapi_routes_static
-  fi
-  routes_via=runtime
+  # The cross-twin gate compares the UNION of static + runtime per twin.
+  # Either source alone misses things: static can't see dynamically-registered
+  # routes (e.g. via `fastify.register(plugin)`); runtime drops route files
+  # whose imports throw (common in CI when workspace `file:` deps haven't
+  # been built yet). Union keeps the gate robust to both gaps.
+  fastify_routes=$( { printf '%s\n' "$fastify_routes_static"; printf '%s\n' "$fastify_runtime"; } | sed '/^$/d' | sort -u )
+  fastapi_routes=$( { printf '%s\n' "$fastapi_routes_static"; printf '%s\n' "$fastapi_runtime"; } | sed '/^$/d' | sort -u )
+  routes_via=union
 
-  # Within-twin: static vs runtime (informational)
+  if [[ -z "$fastify_runtime" ]]; then
+    echo "WARN: fastify runtime emitter produced no routes — gate is using static-only" >&2
+  fi
+  if [[ -z "$fastapi_runtime" ]]; then
+    echo "WARN: fastapi runtime emitter produced no routes — gate is using static-only" >&2
+  fi
+
+  # Within-twin: static vs runtime (informational, never fails).
   if [[ -n "$fastify_runtime" ]]; then
     in_static_not_runtime=$(comm -23 <(echo "$fastify_routes_static") <(echo "$fastify_runtime"))
     in_runtime_not_static=$(comm -13 <(echo "$fastify_routes_static") <(echo "$fastify_runtime"))
     [[ -n "$in_static_not_runtime" ]] && echo "$in_static_not_runtime" | while read -r r; do echo "WARN: fastify route in static but not runtime: $r" >&2; done
     [[ -n "$in_runtime_not_static" ]] && echo "$in_runtime_not_static" | while read -r r; do echo "WARN: fastify route in runtime but not static: $r" >&2; done
+  fi
+  if [[ -n "$fastapi_runtime" ]]; then
+    in_static_not_runtime=$(comm -23 <(echo "$fastapi_routes_static") <(echo "$fastapi_runtime"))
+    in_runtime_not_static=$(comm -13 <(echo "$fastapi_routes_static") <(echo "$fastapi_runtime"))
+    [[ -n "$in_static_not_runtime" ]] && echo "$in_static_not_runtime" | while read -r r; do echo "WARN: fastapi route in static but not runtime: $r" >&2; done
+    [[ -n "$in_runtime_not_static" ]] && echo "$in_runtime_not_static" | while read -r r; do echo "WARN: fastapi route in runtime but not static: $r" >&2; done
   fi
 fi
 

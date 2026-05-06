@@ -37,22 +37,25 @@ twin_surface::routes() {
   [[ -d "$dir" ]] || return 0
 
   if [[ "$twin" == "fastify" ]]; then
-    # fastify.get('/path', ...)  |  fastify.post(...)  |  fastify.route({method, url})
-    grep -rEn --include='*.mjs' --include='*.js' \
-      --exclude-dir=node_modules \
-      -e 'fastify\.(get|post|put|delete|patch|head|options)\(["\x27]' \
-      -e 'app\.(get|post|put|delete|patch|head|options)\(["\x27]' \
-      "$dir" 2>/dev/null \
-      | while IFS=: read -r file line content; do
-          # Extract method and path
-          method=$(echo "$content" | grep -oE '\.(get|post|put|delete|patch|head|options)\(' | head -1 | sed -E 's/\.(.*)\(/\1/')
-          path=$(echo "$content" | sed -nE 's/.*\.(get|post|put|delete|patch|head|options)\(["\x27]([^"\x27]+)["\x27].*/\2/p')
-          if [[ -n "$method" && -n "$path" ]]; then
-            method_upper=$(echo "$method" | tr '[:lower:]' '[:upper:]')
-            jq -nc --arg twin "$twin" --arg method "$method_upper" --arg path "$path" \
-              --arg file "$file" --argjson line "$line" \
-              '{twin:$twin, method:$method, path:$path, file:$file, line:$line}'
-          fi
+    # fastify.get('/path', ...)  |  fastify.post(...)  |  app.get(...)
+    # Uses perl in slurp mode (-0777) so the regex spans newlines — handles
+    # the common `fastify.get(\n  "/path",\n  async (...) => {})` style that
+    # a line-oriented grep would miss. Emits one TSV record per match
+    # (method TAB path TAB file TAB line); the bash loop converts to JSON.
+    find "$dir" -type f \( -name '*.mjs' -o -name '*.js' \) -not -path '*/node_modules/*' -print0 \
+      | xargs -0 perl -0777 -ne '
+          while (m{\b(?:fastify|app)\.(get|post|put|delete|patch|head|options)\s*\(\s*["\x27]([^"\x27]+)["\x27]}g) {
+            my $method = uc($1);
+            my $path   = $2;
+            my $line   = (substr($_, 0, $-[0]) =~ tr/\n//) + 1;
+            print "$method\t$path\t$ARGV\t$line\n";
+          }
+        ' 2>/dev/null \
+      | while IFS=$'\t' read -r method path file line; do
+          [[ -n "$method" && -n "$path" ]] || continue
+          jq -nc --arg twin "$twin" --arg method "$method" --arg path "$path" \
+            --arg file "$file" --argjson line "$line" \
+            '{twin:$twin, method:$method, path:$path, file:$file, line:$line}'
         done
   elif [[ "$twin" == "fastapi" ]]; then
     # @router.get('/path')  |  @app.post(...)
