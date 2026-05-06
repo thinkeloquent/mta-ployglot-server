@@ -11,24 +11,22 @@ GIT_PULL_REMOTE ?= origin
 GIT_PULL_BRANCH ?= release/main
 
 .PHONY: git-pull
-git-pull: ## DESTRUCTIVE: clean + fetch + hard-reset to $(GIT_PULL_REMOTE)/$(GIT_PULL_BRANCH)
-	@# Guard against silent loss of TRACKED-file modifications. Untracked
-	@# files (build outputs, scratch files) are removed by `git clean -fd`
-	@# intentionally — that's the documented purpose of this target. But
-	@# uncommitted edits to tracked files would be unrecoverable, so we
-	@# block by default and require an explicit FORCE=1 to override.
-	@if ! git -C $(ROOT_DIR) diff --quiet HEAD 2>/dev/null; then \
-	  if [ -z "$$FORCE" ]; then \
-	    echo "==> uncommitted modifications to tracked files:"; \
-	    git -C $(ROOT_DIR) diff --stat HEAD; \
-	    echo ""; \
-	    echo "==> ABORT — git-pull would discard the above."; \
-	    echo "    Commit/stash first, or override: FORCE=1 make git-pull"; \
-	    exit 1; \
-	  else \
-	    echo "==> FORCE=1 — discarding uncommitted modifications"; \
-	  fi; \
-	fi
+git-pull: ## DESTRUCTIVE: hard-reset to $(GIT_PULL_REMOTE)/$(GIT_PULL_BRANCH); discards ALL local changes (committed + uncommitted + untracked)
+	@# This target is intentionally UNCONDITIONAL. It discards every form
+	@# of local change so the working tree matches the remote ref exactly:
+	@#
+	@#   git clean -fd    → removes untracked files and dirs
+	@#   git fetch        → updates the remote ref
+	@#   git reset --hard → wipes local commits AND uncommitted edits;
+	@#                      moves HEAD to remote ref's commit
+	@#
+	@# After this runs, `git status` on the relevant branch reports clean
+	@# and `git log` shows the remote's history with no local divergence.
+	@# Ignored files (node_modules, .dev/, .env, .venv) are NOT touched —
+	@# use `make clean-deps` for that.
+	@echo "==> git-pull: discarding local state and resetting to $(GIT_PULL_REMOTE)/$(GIT_PULL_BRANCH)"
+	@before=$$(git -C $(ROOT_DIR) rev-parse --short HEAD 2>/dev/null || echo "?"); \
+	  echo "    before: $$before  ($$(git -C $(ROOT_DIR) rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?'))"
 	git -C $(ROOT_DIR) clean -fd
 	git -C $(ROOT_DIR) fetch $(GIT_PULL_REMOTE)
 	git -C $(ROOT_DIR) reset --hard $(GIT_PULL_REMOTE)/$(GIT_PULL_BRANCH)

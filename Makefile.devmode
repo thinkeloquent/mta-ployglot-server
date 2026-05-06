@@ -52,7 +52,14 @@ dev-install-fastify: ## Build bootstrap into .dev/fastify + stage server/fastify
 	@# unreachable — start the registry before invoking dev, or override via
 	@# `NPM_REGISTRY=https://registry.npmjs.org make dev-install`. The
 	@# exported NPM_CONFIG_REGISTRY env var is what npm actually reads.
-	cd $(DEV_FASTIFY) && npm ci --no-audit --no-fund
+	@# Lockfile fallback: `npm ci` requires package-lock.json. Fresh cloud
+	@# installs and post-`make clean-locks` runs may not have one yet, so
+	@# fall back to `npm install` (which writes a fresh lockfile) when it's
+	@# missing. Subsequent runs land back on the deterministic `npm ci` path.
+	cd $(DEV_FASTIFY) && \
+	  if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
+	  else echo "==> no package-lock.json — npm install (will write one)"; \
+	       npm install --no-audit --no-fund; fi
 	cd $(DEV_FASTIFY) && npm run build
 	@# Stage the standalone app (server/fastify) into .dev/fastify-app. Per
 	@# CLAUDE.md: only workspace.toml siblings get symlinked; every other
@@ -64,7 +71,12 @@ dev-install-fastify: ## Build bootstrap into .dev/fastify + stage server/fastify
 	  rsync -a --delete --exclude node_modules \
 	    $(SERVER_FASTIFY)/ $(DEV_FASTIFY_APP)/ || \
 	  cp -R $(SERVER_FASTIFY)/. $(DEV_FASTIFY_APP)/
-	cd $(DEV_FASTIFY_APP) && npm ci --no-audit --no-fund
+	@# Same lockfile fallback as above — `npm ci` when present, `npm install`
+	@# (which writes one) when not.
+	cd $(DEV_FASTIFY_APP) && \
+	  if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
+	  else echo "==> no package-lock.json — npm install (will write one)"; \
+	       npm install --no-audit --no-fund; fi
 	@# fastify-server: workspace.toml entry server-bootstrap → symlink to .dev/fastify (built).
 	@mkdir -p $(DEV_FASTIFY_APP)/node_modules/@mta
 	@rm -rf $(DEV_FASTIFY_APP)/node_modules/fastify-server
