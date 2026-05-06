@@ -65,6 +65,14 @@ jobs:
           pipx install check-jsonschema
           check-jsonschema --version
 
+      - name: Configure git auth for sibling clones
+        # bootstrap.sh clones every workspace.toml sibling via raw HTTPS.
+        # actions/checkout's RELEASE_ASSEMBLE_TOKEN only applies to the current
+        # repo's .git/config, so install a global insteadOf rule that reuses
+        # the same token for every github.com HTTPS clone bootstrap performs.
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.RELEASE_ASSEMBLE_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Hydrate siblings + doctor
         run: |
           export WORKSPACE_OVERRIDE_ROOT="$RUNNER_TEMP/siblings"

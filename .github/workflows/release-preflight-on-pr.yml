@@ -57,6 +57,15 @@ jobs:
           pip-audit --version
           check-jsonschema --version
 
+      - name: Configure git auth for sibling clones
+        # bootstrap.sh clones every workspace.toml sibling via raw `git clone
+        # https://github.com/thinkeloquent/...`. actions/checkout's PAT only
+        # applies to the current repo's .git/config, not to follow-up clones,
+        # so we install a global insteadOf rule that injects GH_PAT into every
+        # github.com HTTPS clone the runner makes from this point on.
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
       - name: Bootstrap workspace (hydrate siblings)
         # bootstrap.sh hydrate clones every sibling under WORKSPACE_OVERRIDE_ROOT
         # so the registry and orchestrator helpers see them at known paths.
