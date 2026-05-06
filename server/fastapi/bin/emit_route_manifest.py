@@ -69,38 +69,74 @@ class _FakeRoute:
         self.methods = {rec["method"]}
 
 
+def _absorb_route(r, source):
+    """Append a route record from either a `_FakeRoute` (collector path)
+    or a real Starlette/FastAPI Route/APIRoute (mount() returning a real
+    APIRouter). Real routes carry `.path` plus a `.methods` set; we emit
+    one record per HTTP verb (skipping HEAD which Starlette pairs with
+    GET automatically)."""
+    rec = getattr(r, "_rec", None)
+    if rec:
+        collected.append(rec)
+        return
+    path = getattr(r, "path", None)
+    methods = getattr(r, "methods", None)
+    if not path or not methods:
+        return
+    for m in methods:
+        if m == "HEAD":
+            continue
+        collected.append({"source": source, "method": m.upper(), "path": path})
+
+
+def _register_routes_pkg():
+    """Synthesize an in-memory `_routes_pkg` package whose __path__ points
+    at server/fastapi/config/routes/, so route files loaded under this
+    package name can resolve their `from ._di import ...` style imports.
+    """
+    import types
+    pkg = types.ModuleType("_routes_pkg")
+    pkg.__path__ = [str(ROUTES_DIR)]
+    sys.modules["_routes_pkg"] = pkg
+
+
 def main():
     if not ROUTES_DIR.is_dir():
         print(f"emit_route_manifest: cannot read {ROUTES_DIR}", file=sys.stderr)
         sys.exit(1)
 
+    _register_routes_pkg()
+
     files = sorted(p for p in ROUTES_DIR.glob("[0-9]*_*.routes.py"))
     for path in files:
         before = len(collected)
         collector = RouteCollector(path.name)
+        # Build a valid Python module name under the synthetic _routes_pkg
+        # parent so relative imports (`from ._di import ...`) resolve.
+        # Embedded dots in the stem (e.g. `30_figma.routes`) become `_` and
+        # we prefix `_route_` so Python doesn't read the leading digit as a
+        # dotted-package boundary.
+        leaf = "_route_" + path.stem.replace(".", "_")
+        mod_name = f"_routes_pkg.{leaf}"
         try:
-            spec = importlib.util.spec_from_file_location(path.stem, path)
+            spec = importlib.util.spec_from_file_location(mod_name, path)
             mod = importlib.util.module_from_spec(spec)
-            sys.modules[path.stem] = mod
+            sys.modules[mod_name] = mod
             spec.loader.exec_module(mod)
 
             # Dispatch: try mount(), router, or default
             fn = getattr(mod, "mount", None) or getattr(mod, "default", None)
             if callable(fn):
                 result = fn(collector, {})
-                # If mount returned an APIRouter, walk its routes
+                # If mount returned an APIRouter (real or fake), walk its routes
                 if result is not None and hasattr(result, "routes"):
                     for r in result.routes:
-                        rec = getattr(r, "_rec", None)
-                        if rec:
-                            collected.append(rec)
+                        _absorb_route(r, path.name)
             else:
                 router = getattr(mod, "router", None)
                 if router is not None and hasattr(router, "routes"):
                     for r in router.routes:
-                        rec = getattr(r, "_rec", None)
-                        if rec:
-                            collected.append(rec)
+                        _absorb_route(r, path.name)
                 else:
                     print(f"WARN: {path.name}: no mount/router/default", file=sys.stderr)
         except Exception as e:  # noqa: BLE001

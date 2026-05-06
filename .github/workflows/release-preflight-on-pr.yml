@@ -76,6 +76,16 @@ jobs:
       - name: Doctor (verify symlinks, registry, sibling clones)
         run: make doctor
 
+      - name: Install server deps (so twin-diff runtime emitters can resolve imports)
+        # Both runtime emitters (server/fastify/bin/emit-route-manifest.mjs and
+        # server/fastapi/bin/emit_route_manifest.py) execute the addons in a
+        # sandbox and capture route registrations. If their workspace imports
+        # (`@ployglot/app-yaml-fetch-config`, `app_yaml_fetch_config`, etc.)
+        # don't resolve, those route files raise on import and the runtime
+        # emitter silently misses their routes — leading to within-twin
+        # static-vs-runtime gaps and cross-twin drift in twin-diff.
+        run: make install
+
       - name: Release preflight
         # CI=1 puts every gate in strict mode (vault-check hard-fails on unset
         # keys; security-scan hard-fails on missing pip-audit or when neither

@@ -73,24 +73,44 @@ emit() {
   fi
 }
 
-# Run the chosen gate, capturing exit status.
+# Run the chosen gate, capturing exit status. Output is captured into a tmp
+# file so the success path stays quiet (the per-sibling table line emitted
+# by `emit` is the only signal we want), but on failure we replay the log
+# to stderr so the failing make output is visible in the parent CI log
+# instead of vanishing into /dev/null.
 rc=0
+log_tmp="$(mktemp -t sibling-gate.XXXXXX)"
+trap 'rm -f "$log_tmp"' EXIT
+__run() {
+  local target="$1"
+  printf -- '\n--- make %s ---\n' "$target" >>"$log_tmp"
+  if make -s "$target" >>"$log_tmp" 2>&1; then return 0; fi
+  return $?
+}
 case "$chosen" in
   pre-push)
-    make -s pre-push >/dev/null 2>&1 || rc=$?
+    __run pre-push || rc=$?
     ;;
   ci)
-    make -s ci >/dev/null 2>&1 || rc=$?
+    __run ci || rc=$?
     ;;
   test+lint)
-    if ! make -s lint >/dev/null 2>&1; then rc=1; fi
-    if ! make -s test >/dev/null 2>&1; then rc=1; fi
+    __run lint || rc=$?
+    __run test || rc=$?
     ;;
   none)
     emit "SKIP" "$chosen"
     exit 0
     ;;
 esac
+
+if [[ "$rc" -ne 0 ]]; then
+  {
+    printf -- '----- %s: %s output (rc=%d) -----\n' "$SIBLING_NAME" "$chosen" "$rc"
+    cat "$log_tmp"
+    printf -- '----- end %s output -----\n' "$SIBLING_NAME"
+  } >&2
+fi
 
 if [[ "$rc" -eq 0 ]]; then
   emit "PASS" "$chosen"
