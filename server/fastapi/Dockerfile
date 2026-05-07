@@ -29,7 +29,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /build
 
 # Install uv (Astral's fast Python package manager).
-RUN pip install --no-cache-dir "uv>=0.4,<1.0"
+RUN pip install --no-cache-dir "uv==0.11.11"
 
 # Copy ONLY the fastapi_server package tree from the submodule.
 COPY ployglots/mta-ployglot-server-bootstrap/fastapi_server/ /build/fastapi_server/
