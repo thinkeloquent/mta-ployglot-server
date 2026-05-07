@@ -43,24 +43,15 @@ failed=0
 
 # --- gate 1: license format ----------------------------------------------------
 
-# `find -L` follows symlinks (required for dev-mode topology where
-# ployglots/<name> is a symlink). On release-workflow runs the entries are
-# real dirs from `git subtree add`, so the same scan still works.
-bad_license=()
-while IFS= read -r f; do
-  if grep -qE '^[[:space:]]*license[[:space:]]*=[[:space:]]*\{' "$f" 2>/dev/null; then
-    bad_license+=("$f")
-  fi
-done < <(find -L ployglots -type f -name pyproject.toml \
-  -not -path "*/.venv/*" -not -path "*/node_modules/*" -not -path "*/dist/*" 2>/dev/null)
-
-if (( ${#bad_license[@]} > 0 )); then
-  echo "FAIL: PEP 621 table-form license declarations found (Poetry 2.x rejects these when license-files is set):" >&2
-  for f in "${bad_license[@]}"; do echo "  $f" >&2; done
-  echo "  fix: replace 'license = { text = \"MIT\" }' with 'license = \"MIT\"'" >&2
-  failed=1
-else
+# Predicate lives in .bin/fix-pyproject-license.py — section-aware (only
+# inspects [project] / [tool.poetry]) and follows symlinks so dev-mode
+# (ployglots/<name> as a symlink) and release-workflow mode (real subtree
+# directories) share the same scan.
+if ROOT_DIR="$ROOT_DIR" "$ROOT_DIR/.bin/fix-pyproject-license.py" --check ployglots server >&2; then
   echo "pass: gate 1 — license format (PEP 639 SPDX strings only)"
+else
+  echo "  fix locally: ./.bin/fix-pyproject-license.py --apply" >&2
+  failed=1
 fi
 
 # --- gate 2: TOML well-formedness ---------------------------------------------
