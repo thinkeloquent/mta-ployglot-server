@@ -184,15 +184,6 @@ process_entry() {
   local_path="$(effective_local_path "$name" "$local_path_raw")"
   shell_path="$(effective_shell_path "$shell_path_raw")"
 
-  # Refuse to overwrite a real directory at shell_path. This is a hard stop
-  # in every mode except dry-run, which only logs.
-  if [[ -e "$shell_path" && ! -L "$shell_path" ]]; then
-    if [[ -d "$shell_path" ]]; then
-      echo "FAIL: $shell_path exists as a real directory; refusing to overwrite (entry '$name')" >&2
-      [[ "$MODE" == "dry-run" ]] && return 0 || return 67
-    fi
-  fi
-
   case "$MODE" in
     verify)
       # Read-only assertions: clone exists, symlink exists and resolves to local_path.
@@ -217,6 +208,10 @@ process_entry() {
       return 0
       ;;
     dry-run)
+      if [[ -e "$shell_path" && ! -L "$shell_path" && -d "$shell_path" ]]; then
+        log "[dry-run] $shell_path is a real directory (subtree topology); hydrate would refuse"
+        return 0
+      fi
       if [[ ! -d "$local_path" ]]; then
         log "[dry-run] would clone $remote → $local_path (ref: $default_ref)"
       else
@@ -235,6 +230,13 @@ process_entry() {
       return 0
       ;;
     hydrate)
+      # Refuse to overwrite a real directory at shell_path (e.g. a squashed
+      # subtree from a release-branch assembly). hydrate is the only mode
+      # that would write to shell_path, so the guard belongs here.
+      if [[ -e "$shell_path" && ! -L "$shell_path" && -d "$shell_path" ]]; then
+        echo "FAIL: $shell_path exists as a real directory; refusing to overwrite (entry '$name')" >&2
+        return 67
+      fi
       # Clone if missing.
       if [[ ! -d "$local_path" ]]; then
         if ! remote_reachable "$remote" "$name"; then
