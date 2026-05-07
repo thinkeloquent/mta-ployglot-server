@@ -172,7 +172,7 @@ make smoke       # full containerized smoke (build → up → curl → down)
 make down
 ```
 
-Or stepwise: `make build && make up`.
+Or stepwise: `make build.docker && make up`.
 
 | Service | Host port | Container port |
 | ------- | --------- | -------------- |

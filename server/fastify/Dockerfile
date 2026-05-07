@@ -31,7 +31,7 @@ COPY ployglots/mta-ployglot-server-bootstrap/fastify_server/package.json \
      ./
 
 # npm registry — SSOT is `Makefile.vars NPM_REGISTRY`. The Make-driven path
-# (`make docker-install` / `make ci-install` / `make build`) passes the
+# (`make docker-install` / `make ci-install` / `make build.docker`) passes the
 # value through as `--build-arg NPM_REGISTRY=...`. The default below mirrors
 # Makefile.vars and is only consulted when this Dockerfile is built RAW
 # (direct `docker build ...` outside the Makefile). If you change one, change

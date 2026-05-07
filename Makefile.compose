@@ -135,8 +135,8 @@ docker-install: ## Build/download both docker images (compose build — pulls ba
 ci-install: ## Build both images with --pull (CI-safe, reproducible base layers)
 	$(COMPOSE) build --pull --build-arg NPM_REGISTRY=$(NPM_REGISTRY)
 
-.PHONY: build
-build: docker-install ## Alias for docker-install — compose build IS the build artifact
+.PHONY: build.docker
+build.docker: docker-install ## Alias for docker-install — compose build IS the build artifact
 
 # ---------------------------------------------------------------------------
 # lifecycle — run

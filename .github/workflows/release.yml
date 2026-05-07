@@ -162,6 +162,15 @@ jobs:
         # localhost:4873, 127.0.0.1.
         run: ./.bin/check-no-hardcoded-registry.sh
 
+      - name: Check Python pin policy (SSOT = .bin/python-pins.toml)
+        # Validates every pyproject.toml / requirements.txt under ployglots/
+        # and server/ against the canonical pin list at .bin/python-pins.toml.
+        # Catches drift where one sibling declares fastapi>=0.115 while the
+        # SSOT says fastapi==0.128.0, missing extras (httpx[http2]), and
+        # requires-python mismatches. Counterpart of the agent-side
+        # `python-pin-pkg-version` skill — both read the same TOML.
+        run: ./.bin/check-python-pins.py
+
       - name: Release preflight (license format, TOML parse, bootstrap re-emit)
         # Last chance to bail before history flattens. The orphan-collapse
         # step rewrites release/<X> to a parent-less single commit and

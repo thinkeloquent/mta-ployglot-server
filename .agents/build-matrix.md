@@ -23,7 +23,7 @@ Per-language toolchains, lockfile state, and how each app's deps are sourced.
 | Install command   | `cd server/fastify && npm install`                             | `pip install -e` against sibling-symlinked paths into `.venv/`           |
 | Source staging    | Submodule mutated in-place is OK — `file:` dep reads from there | Submodule mutated in-place is OK — editable install reads from there    |
 
-### Docker (`make build && make up`)
+### Docker (`make build.docker && make up`)
 
 | Step              | mjs twin                                           | py twin                                           |
 |-------------------|----------------------------------------------------|---------------------------------------------------|

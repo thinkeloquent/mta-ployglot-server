@@ -73,8 +73,8 @@ dev-prebuild-siblings: ## Build dist/ in every sibling ts twin (required before 
 	done
 	@echo "==> sibling ts twins built"
 
-.PHONY: build-dist
-build-dist: dev-prebuild-siblings ## Alias for dev-prebuild-siblings — build dist/ in every sibling ts twin
+.PHONY: build.npm
+build.npm: dev-prebuild-siblings ## Alias for dev-prebuild-siblings — build dist/ in every sibling ts twin
 
 .PHONY: dev-install-fastify
 dev-install-fastify: dev-prebuild-siblings ## Build bootstrap into .dev/fastify + stage server/fastify into .dev/fastify-app
