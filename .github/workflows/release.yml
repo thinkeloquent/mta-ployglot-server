@@ -152,6 +152,16 @@ jobs:
             git commit -m "chore(release): strip .claude/ from root and each subtree"
           fi
 
+      - name: Check no hardcoded registry URLs in package configs
+        # Refuses any literal package-registry URL committed to the assembled
+        # tree (pyproject.toml [[tool.uv.index]], [tool.poetry.source]; uv.toml
+        # index-url / [[index]].url; .npmrc registry=; pip.conf / .pypirc).
+        # Registry URLs must flow at runtime from Makefile.vars / .env via
+        # NPM_REGISTRY and PYTHON_REGISTRY_URL → PIP_INDEX_URL / UV_INDEX_URL /
+        # UV_DEFAULT_INDEX. Allowlist: registry.npmjs.org, pypi.org,
+        # localhost:4873, 127.0.0.1.
+        run: ./.bin/check-no-hardcoded-registry.sh
+
       - name: Release preflight (license format, TOML parse, bootstrap re-emit)
         # Last chance to bail before history flattens. The orphan-collapse
         # step rewrites release/<X> to a parent-less single commit and
