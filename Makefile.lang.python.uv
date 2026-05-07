@@ -24,7 +24,10 @@
 # early-return `exit 0` from a guard actually returns from the recipe.
 
 UV         ?= $(shell command -v uv 2>/dev/null)
-UV_PYTHON  ?= 3.13
+# UV_PYTHON is owned by Makefile.vars (single source of truth, matches the
+# repo-wide .python-version pin). The `?=` here is a safety fallback for any
+# consumer that includes this fragment without the vars file.
+UV_PYTHON  ?= 3.11
 UV_VENV    ?= $(DEV_VENV)
 
 # Editable-install set: paths whose pyproject.toml the shared venv resolves

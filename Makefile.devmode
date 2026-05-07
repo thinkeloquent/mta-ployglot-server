@@ -177,7 +177,7 @@ dev-install-fastapi: ## Create .dev/fastapi venv and install fastapi_server + pr
 	@test -d $(APP_YAML_FETCH_CONFIG_DIR)/packages/py || { \
 	  echo "==> $(APP_YAML_FETCH_CONFIG_DIR)/packages/py not found — clone mta-ployglot-pkg-app-yaml-fetch-config into ployglots/"; exit 1; }
 	@mkdir -p $(DEV_FASTAPI)
-	@test -d $(DEV_VENV) || uv venv $(DEV_VENV) --python 3.13
+	@test -d $(DEV_VENV) || uv venv $(DEV_VENV) --python $(UV_PYTHON)
 	uv pip install --python $(DEV_VENV)/bin/python \
 	  -e "$(BOOTSTRAP_DIR)/fastapi_server" \
 	  -e "$(PRINT_ROUTES_DIR)/packages/py" \
