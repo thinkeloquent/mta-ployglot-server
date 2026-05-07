@@ -52,7 +52,7 @@ pipx install 'tomlq==0.1.0'
 pipx install 'virtualenv==20.36.0'
 pipx install 'poetry==2.3.2'
 pipx install 'check-jsonschema==0.37.0'
-pipx install 'uv==26.1.1'
+pipx install 'uv==0.11.11'
 ```
 
 | Tool                       | Used by                                                |
@@ -62,7 +62,7 @@ pipx install 'uv==26.1.1'
 | `virtualenv==20.36.0`      | fallback venv creation on systems where `python -m venv` is broken |
 | `poetry==2.3.2`            | poetry-managed siblings under `ployglots/<name>/`      |
 | `check-jsonschema==0.37.0` | `validate.sh` — schema-checks `workspace.toml`         |
-| `uv==26.1.1`               | `make py.install`, `server/fastapi/.venv` editable installs |
+| `uv==0.11.11`              | `make py.install`, `server/fastapi/.venv` editable installs |
 
 ### 0d. Verify
 
@@ -78,7 +78,7 @@ tomlq --version             # → 0.1.0
 virtualenv --version        # → 20.36.0
 poetry --version            # → Poetry (version 2.3.2)
 check-jsonschema --version  # → 0.37.0
-uv --version                # → 26.1.1
+uv --version                # → 0.11.11
 ```
 
 If any version differs, re-run the matching `pipx install` (or
