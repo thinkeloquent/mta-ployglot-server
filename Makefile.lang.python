@@ -13,13 +13,6 @@
 POETRY ?= $(shell command -v poetry 2>/dev/null)
 PYTEST ?= $(PYTHON) -m pytest
 
-# Filter PY_PKGS down to entries poetry can actually install. The "is this
-# a poetry project?" predicate ("[tool.poetry]" present OR poetry-core
-# build backend) lives in .bin/list-poetry-packages.sh — touch that script
-# to evolve the heuristic. Computed once at parse time so the install loop
-# stays a tight iteration over real targets, not an N-line wall of skips.
-POETRY_PKGS := $(shell ROOT_DIR=$(ROOT_DIR) $(ROOT_DIR)/.bin/list-poetry-packages.sh $(PY_PKGS) 2>/dev/null)
-
 .PHONY: py.preinstall py.install py.ci-install py.lint py.test py.build py.clean py.ci
 
 py.preinstall: ## (python) pre-install hook — add `poetry config …` commands here
@@ -31,23 +24,19 @@ py.preinstall: ## (python) pre-install hook — add `poetry config …` commands
 	@#   $(POETRY) config http-basic.private $$PYPI_USER $$PYPI_PASS
 	@:
 
-py.install: py.preinstall ## (python) install deps for every Python sibling (poetry install)
-	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
-	if [ -z "$(POETRY_PKGS)" ]; then \
-	  echo "skip: no poetry projects in PY_PKGS (uv-managed roots are handled by py.uv-install)"; exit 0; fi; \
-	for p in $(POETRY_PKGS); do \
-	  echo "==> $$p"; \
-	  (cd $(ROOT_DIR)/$$p && $(POETRY) install); \
-	done
+py.install: py.preinstall ## (python) lock + install server/fastapi via poetry (--no-root)
+	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi
+	@test -f $(SERVER_FASTAPI)/pyproject.toml || { \
+	  echo "FAIL: $(SERVER_FASTAPI)/pyproject.toml not found"; exit 1; }
+	$(POETRY) lock -C $(SERVER_FASTAPI)
+	$(POETRY) install -C $(SERVER_FASTAPI) --no-root -vv
 
-py.ci-install: py.preinstall ## (python) deterministic CI install (poetry install --sync --no-interaction)
-	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
-	if [ -z "$(POETRY_PKGS)" ]; then \
-	  echo "skip: no poetry projects in PY_PKGS (uv-managed roots are handled by py.uv-ci-install)"; exit 0; fi; \
-	for p in $(POETRY_PKGS); do \
-	  echo "==> $$p"; \
-	  (cd $(ROOT_DIR)/$$p && $(POETRY) install --no-interaction --sync); \
-	done
+py.ci-install: py.preinstall ## (python) deterministic CI install for server/fastapi (--no-interaction --sync)
+	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi
+	@test -f $(SERVER_FASTAPI)/pyproject.toml || { \
+	  echo "FAIL: $(SERVER_FASTAPI)/pyproject.toml not found"; exit 1; }
+	$(POETRY) lock -C $(SERVER_FASTAPI)
+	$(POETRY) install -C $(SERVER_FASTAPI) --no-root --no-interaction --sync
 
 py.lint: ## (python) ruff (preferred) or flake8 — graceful when neither is installed
 	@for p in $(PY_PKGS); do \

@@ -43,11 +43,20 @@ failed=0
 
 # --- gate 1: license format ----------------------------------------------------
 
-bad_license=$(grep -rln --include='pyproject.toml' \
-  -E '^[[:space:]]*license[[:space:]]*=[[:space:]]*\{' ployglots/ 2>/dev/null || true)
-if [[ -n "$bad_license" ]]; then
-  echo "FAIL: PEP 621 table-form license declarations found (Poetry 2.x rejects these):" >&2
-  echo "$bad_license" | sed 's/^/  /' >&2
+# `find -L` follows symlinks (required for dev-mode topology where
+# ployglots/<name> is a symlink). On release-workflow runs the entries are
+# real dirs from `git subtree add`, so the same scan still works.
+bad_license=()
+while IFS= read -r f; do
+  if grep -qE '^[[:space:]]*license[[:space:]]*=[[:space:]]*\{' "$f" 2>/dev/null; then
+    bad_license+=("$f")
+  fi
+done < <(find -L ployglots -type f -name pyproject.toml \
+  -not -path "*/.venv/*" -not -path "*/node_modules/*" -not -path "*/dist/*" 2>/dev/null)
+
+if (( ${#bad_license[@]} > 0 )); then
+  echo "FAIL: PEP 621 table-form license declarations found (Poetry 2.x rejects these when license-files is set):" >&2
+  for f in "${bad_license[@]}"; do echo "  $f" >&2; done
   echo "  fix: replace 'license = { text = \"MIT\" }' with 'license = \"MIT\"'" >&2
   failed=1
 else
@@ -61,7 +70,8 @@ while IFS= read -r f; do
   if ! python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$f" 2>/dev/null; then
     bad_toml+=("$f")
   fi
-done < <(find ployglots -name pyproject.toml -type f 2>/dev/null)
+done < <(find -L ployglots -type f -name pyproject.toml \
+  -not -path "*/.venv/*" -not -path "*/node_modules/*" -not -path "*/dist/*" 2>/dev/null)
 
 if (( ${#bad_toml[@]} > 0 )); then
   echo "FAIL: pyproject.toml files failed to parse as TOML:" >&2
