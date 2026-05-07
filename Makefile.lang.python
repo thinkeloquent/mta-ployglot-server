@@ -13,14 +13,12 @@
 POETRY ?= $(shell command -v poetry 2>/dev/null)
 PYTEST ?= $(PYTHON) -m pytest
 
-# A pyproject.toml is poetry-installable iff it declares `[tool.poetry]` OR
-# names `poetry.core.masonry.api` as its build backend. Anything else — uv
-# workspace roots, `[tool.uv] package = false` aggregators, plain PEP 621
-# projects with a non-poetry backend — Poetry 2.x rejects with:
-#   "Either [project.name] or [tool.poetry.name] is required in package mode"
-# This regex is the canonical "is this a poetry project?" test used by
-# py.install / py.ci-install. Keep both recipes in sync.
-POETRY_PROJECT_GREP := ^\[tool\.poetry\]|poetry\.core\.masonry\.api
+# Filter PY_PKGS down to entries poetry can actually install. The "is this
+# a poetry project?" predicate ("[tool.poetry]" present OR poetry-core
+# build backend) lives in .bin/list-poetry-packages.sh — touch that script
+# to evolve the heuristic. Computed once at parse time so the install loop
+# stays a tight iteration over real targets, not an N-line wall of skips.
+POETRY_PKGS := $(shell ROOT_DIR=$(ROOT_DIR) $(ROOT_DIR)/.bin/list-poetry-packages.sh $(PY_PKGS) 2>/dev/null)
 
 .PHONY: py.preinstall py.install py.ci-install py.lint py.test py.build py.clean py.ci
 
@@ -35,30 +33,18 @@ py.preinstall: ## (python) pre-install hook — add `poetry config …` commands
 
 py.install: py.preinstall ## (python) install deps for every Python sibling (poetry install)
 	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
-	if [ -z "$(PY_PKGS)" ]; then echo "skip: PY_PKGS empty"; exit 0; fi; \
-	for p in $(PY_PKGS); do \
-	  pyproject="$(ROOT_DIR)/$$p/pyproject.toml"; \
-	  if [ ! -f "$$pyproject" ]; then \
-	    echo "==> $$p (skip: no top-level pyproject.toml)"; continue; \
-	  fi; \
-	  if ! grep -qE '$(POETRY_PROJECT_GREP)' "$$pyproject" 2>/dev/null; then \
-	    echo "==> $$p (skip: not a poetry project)"; continue; \
-	  fi; \
+	if [ -z "$(POETRY_PKGS)" ]; then \
+	  echo "skip: no poetry projects in PY_PKGS (uv-managed roots are handled by py.uv-install)"; exit 0; fi; \
+	for p in $(POETRY_PKGS); do \
 	  echo "==> $$p"; \
 	  (cd $(ROOT_DIR)/$$p && $(POETRY) install); \
 	done
 
 py.ci-install: py.preinstall ## (python) deterministic CI install (poetry install --sync --no-interaction)
 	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
-	if [ -z "$(PY_PKGS)" ]; then echo "skip: PY_PKGS empty"; exit 0; fi; \
-	for p in $(PY_PKGS); do \
-	  pyproject="$(ROOT_DIR)/$$p/pyproject.toml"; \
-	  if [ ! -f "$$pyproject" ]; then \
-	    echo "==> $$p (skip: no top-level pyproject.toml)"; continue; \
-	  fi; \
-	  if ! grep -qE '$(POETRY_PROJECT_GREP)' "$$pyproject" 2>/dev/null; then \
-	    echo "==> $$p (skip: not a poetry project)"; continue; \
-	  fi; \
+	if [ -z "$(POETRY_PKGS)" ]; then \
+	  echo "skip: no poetry projects in PY_PKGS (uv-managed roots are handled by py.uv-ci-install)"; exit 0; fi; \
+	for p in $(POETRY_PKGS); do \
 	  echo "==> $$p"; \
 	  (cd $(ROOT_DIR)/$$p && $(POETRY) install --no-interaction --sync); \
 	done

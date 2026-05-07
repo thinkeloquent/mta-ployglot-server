@@ -152,6 +152,18 @@ jobs:
             git commit -m "chore(release): strip .claude/ from root and each subtree"
           fi
 
+      - name: Release preflight (license format, TOML parse, bootstrap re-emit)
+        # Last chance to bail before history flattens. The orphan-collapse
+        # step rewrites release/<X> to a parent-less single commit and
+        # force-pushes; failures detected after that point cost a full
+        # re-run. Gates (see scripts/workspace/release-preflight.sh):
+        #   1. No PEP 621 table-form `license = { ... }` (Poetry 2.x rejects).
+        #   2. Every ployglots/**/pyproject.toml parses as TOML.
+        #   3. `bootstrap.sh --re-emit-only` succeeds against the assembled
+        #      real-directory topology — the same code path a fresh clone of
+        #      release/<X> hits on `make bootstrap`.
+        run: ./scripts/workspace/release-preflight.sh
+
       - name: Collapse to a parent-less orphan commit
         # release/<X> is rebuilt from scratch every run with no shared
         # history. Take the assembled working tree, wrap it as a parent-less

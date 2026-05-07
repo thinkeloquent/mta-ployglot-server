@@ -34,6 +34,11 @@ services:
         ployglot-pkg-fetch-client: ./ployglots/mta-ployglot-pkg-fetch-client
         ployglot-pkg-figma-api: ./ployglots/mta-ployglot-pkg-figma-api
         ployglot-pkg-vault: ./ployglots/mta-ployglot-pkg-vault
+        ployglot-pkg-env-resolve: ./ployglots/mta-ployglot-pkg-env-resolve
+        ployglot-pkg-app-yaml-loader: ./ployglots/mta-ployglot-pkg-app-yaml-loader
+        ployglot-pkg-runtime-template-resolver: ./ployglots/mta-ployglot-pkg-app-yaml-overwrite
+        ployglot-pkg-app-yaml-config: ./ployglots/mta-ployglot-pkg-app-yaml-config
+        ployglot-pkg-app-yaml-fetch-config: ./ployglots/mta-ployglot-pkg-app-yaml-fetch-config
         ployglot-tools-flatten-project-files: ./ployglots/mta-ployglot-tools-flatten-project-files
         ployglot-tools-prompt-injection-defense: ./ployglots/mta-ployglot-tools-prompt-injection-defense-strategies
     environment:
@@ -76,6 +81,11 @@ services:
         ployglot-pkg-fetch-client: ./ployglots/mta-ployglot-pkg-fetch-client
         ployglot-pkg-figma-api: ./ployglots/mta-ployglot-pkg-figma-api
         ployglot-pkg-vault: ./ployglots/mta-ployglot-pkg-vault
+        ployglot-pkg-env-resolve: ./ployglots/mta-ployglot-pkg-env-resolve
+        ployglot-pkg-app-yaml-loader: ./ployglots/mta-ployglot-pkg-app-yaml-loader
+        ployglot-pkg-runtime-template-resolver: ./ployglots/mta-ployglot-pkg-app-yaml-overwrite
+        ployglot-pkg-app-yaml-config: ./ployglots/mta-ployglot-pkg-app-yaml-config
+        ployglot-pkg-app-yaml-fetch-config: ./ployglots/mta-ployglot-pkg-app-yaml-fetch-config
         ployglot-tools-flatten-project-files: ./ployglots/mta-ployglot-tools-flatten-project-files
         ployglot-tools-prompt-injection-defense: ./ployglots/mta-ployglot-tools-prompt-injection-defense-strategies
     environment:
