@@ -13,6 +13,15 @@
 POETRY ?= $(shell command -v poetry 2>/dev/null)
 PYTEST ?= $(PYTHON) -m pytest
 
+# A pyproject.toml is poetry-installable iff it declares `[tool.poetry]` OR
+# names `poetry.core.masonry.api` as its build backend. Anything else — uv
+# workspace roots, `[tool.uv] package = false` aggregators, plain PEP 621
+# projects with a non-poetry backend — Poetry 2.x rejects with:
+#   "Either [project.name] or [tool.poetry.name] is required in package mode"
+# This regex is the canonical "is this a poetry project?" test used by
+# py.install / py.ci-install. Keep both recipes in sync.
+POETRY_PROJECT_GREP := ^\[tool\.poetry\]|poetry\.core\.masonry\.api
+
 .PHONY: py.preinstall py.install py.ci-install py.lint py.test py.build py.clean py.ci
 
 py.preinstall: ## (python) pre-install hook — add `poetry config …` commands here
@@ -28,11 +37,12 @@ py.install: py.preinstall ## (python) install deps for every Python sibling (poe
 	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
 	if [ -z "$(PY_PKGS)" ]; then echo "skip: PY_PKGS empty"; exit 0; fi; \
 	for p in $(PY_PKGS); do \
-	  if [ ! -f "$(ROOT_DIR)/$$p/pyproject.toml" ]; then \
+	  pyproject="$(ROOT_DIR)/$$p/pyproject.toml"; \
+	  if [ ! -f "$$pyproject" ]; then \
 	    echo "==> $$p (skip: no top-level pyproject.toml)"; continue; \
 	  fi; \
-	  if grep -q '^\[tool\.uv\.workspace\]' "$(ROOT_DIR)/$$p/pyproject.toml" 2>/dev/null; then \
-	    echo "==> $$p (skip: uv workspace root, not a poetry project)"; continue; \
+	  if ! grep -qE '$(POETRY_PROJECT_GREP)' "$$pyproject" 2>/dev/null; then \
+	    echo "==> $$p (skip: not a poetry project)"; continue; \
 	  fi; \
 	  echo "==> $$p"; \
 	  (cd $(ROOT_DIR)/$$p && $(POETRY) install); \
@@ -42,11 +52,12 @@ py.ci-install: py.preinstall ## (python) deterministic CI install (poetry instal
 	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
 	if [ -z "$(PY_PKGS)" ]; then echo "skip: PY_PKGS empty"; exit 0; fi; \
 	for p in $(PY_PKGS); do \
-	  if [ ! -f "$(ROOT_DIR)/$$p/pyproject.toml" ]; then \
+	  pyproject="$(ROOT_DIR)/$$p/pyproject.toml"; \
+	  if [ ! -f "$$pyproject" ]; then \
 	    echo "==> $$p (skip: no top-level pyproject.toml)"; continue; \
 	  fi; \
-	  if grep -q '^\[tool\.uv\.workspace\]' "$(ROOT_DIR)/$$p/pyproject.toml" 2>/dev/null; then \
-	    echo "==> $$p (skip: uv workspace root, not a poetry project)"; continue; \
+	  if ! grep -qE '$(POETRY_PROJECT_GREP)' "$$pyproject" 2>/dev/null; then \
+	    echo "==> $$p (skip: not a poetry project)"; continue; \
 	  fi; \
 	  echo "==> $$p"; \
 	  (cd $(ROOT_DIR)/$$p && $(POETRY) install --no-interaction --sync); \
