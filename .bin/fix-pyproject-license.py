@@ -37,6 +37,7 @@ import argparse
 import os
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 # Match a table-form `license = { ... }` line. Captures the inner key
@@ -66,6 +67,67 @@ def _is_validated_section(section: str | None) -> bool:
     if section is None:
         return False
     return section in _VALIDATED_SECTIONS
+
+
+def _path_dep_pyprojects(pyproject: Path) -> list[Path]:
+    """Return every pyproject.toml referenced by a `path = "..."` dependency.
+
+    Walks both `[tool.poetry.dependencies]` (poetry table form) and
+    `[project.dependencies]`-adjacent path specs (less common). Resolves
+    relative paths against the pyproject's own directory — the same way
+    poetry does — so we cover exactly the set poetry validates on `lock`.
+    """
+    out: list[Path] = []
+    try:
+        with pyproject.open("rb") as f:
+            doc = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return out
+
+    base = pyproject.parent
+
+    def _add(raw: str) -> None:
+        target = (base / raw).resolve()
+        candidate = target / "pyproject.toml" if target.is_dir() else target
+        if candidate.exists() and candidate.name == "pyproject.toml":
+            out.append(candidate)
+
+    poetry_deps = (doc.get("tool", {}).get("poetry", {}).get("dependencies", {}) or {})
+    for spec in poetry_deps.values():
+        if isinstance(spec, dict) and isinstance(spec.get("path"), str):
+            _add(spec["path"])
+    for group in (doc.get("tool", {}).get("poetry", {}).get("group", {}) or {}).values():
+        if not isinstance(group, dict):
+            continue
+        for spec in (group.get("dependencies", {}) or {}).values():
+            if isinstance(spec, dict) and isinstance(spec.get("path"), str):
+                _add(spec["path"])
+    return out
+
+
+def _expand_via_path_deps(seeds: list[Path]) -> list[Path]:
+    """Walk `path = ...` dep references transitively, returning a unique set."""
+    seen: set[Path] = set()
+    queue: list[Path] = list(seeds)
+    out: list[Path] = []
+    while queue:
+        p = queue.pop()
+        rp = p.resolve()
+        if rp in seen:
+            continue
+        seen.add(rp)
+        out.append(p)
+        queue.extend(_path_dep_pyprojects(p))
+    return out
+
+
+def _is_poetry_project(pyproject: Path) -> bool:
+    """True iff this pyproject declares poetry config (table OR poetry-core backend)."""
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return bool(re.search(r"^\[tool\.poetry\]|poetry\.core\.masonry\.api", text, re.MULTILINE))
 
 
 def _iter_pyprojects(roots: list[Path]) -> list[Path]:
@@ -189,6 +251,14 @@ def main() -> int:
         "paths", nargs="*",
         help="files or directories to scan (default: ployglots/, server/, packages/)",
     )
+    parser.add_argument(
+        "--no-follow-paths", action="store_true",
+        help="skip transitive `path = ...` dep resolution (default: follow)",
+    )
+    parser.add_argument(
+        "--clean-stale-locks", action="store_true",
+        help="(--apply only) delete poetry.lock files in non-poetry directories",
+    )
     args = parser.parse_args()
 
     if args.apply and args.check:
@@ -209,6 +279,14 @@ def main() -> int:
             pyprojects.extend(_iter_pyprojects([t]))
         # Silently ignore non-existent paths — useful when only some default
         # roots exist (e.g. a sibling repo with no `server/`).
+
+    # Follow `path = "..."` dependency references so we cover every pyproject
+    # poetry actually walks during `lock`. Without this, a broken license in
+    # a path-dep that lives outside ployglots/ / server/ / packages/ slips
+    # through the static scan and the user gets "fix passed but error
+    # remains" — exactly the failure mode this script exists to prevent.
+    if not args.no_follow_paths and pyprojects:
+        pyprojects = _expand_via_path_deps(pyprojects)
 
     if not pyprojects:
         print("no pyproject.toml files found under any target", file=sys.stderr)
@@ -243,6 +321,21 @@ def main() -> int:
                 else:
                     file_form_files.append(path)
                     print(f"{rel}:{lineno}  {line}    [manual fix: choose SPDX + add license-files]", file=sys.stderr)
+
+    # Stale-lock cleanup: a `poetry.lock` next to a pyproject.toml that
+    # doesn't declare poetry is leftover from an earlier broken `py.install`
+    # iteration. It can't influence pyproject validation, but it confuses
+    # diagnostics and is dead weight. Scoped to the pyprojects we already
+    # walked so we never roam the filesystem unconfined.
+    cleaned_locks = 0
+    if args.apply and args.clean_stale_locks:
+        for path in pyprojects:
+            lock = path.parent / "poetry.lock"
+            if lock.exists() and not _is_poetry_project(path):
+                rel = lock.relative_to(root) if lock.is_relative_to(root) else lock
+                lock.unlink()
+                cleaned_locks += 1
+                print(f"cleaned: {rel} (stale — directory is not a poetry project)")
 
     # Summary + exit code.
     text_count = len({p for p in text_form_files})
