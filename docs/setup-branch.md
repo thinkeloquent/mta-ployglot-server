@@ -244,12 +244,29 @@ the runtime tree under `.dev/` and `.prod/` so you never mutate
 
 ```bash
 make dev             # background: stages .dev/, runs both servers, writes pids+logs
+make dev-fg          # foreground parallel: cloud / CI canonical (Ctrl-C to stop)
 make dev-fastify     # foreground fastify, with `node --watch`
 make dev-fastapi     # foreground fastapi
+make dev-healthz     # sleeps 5s, then curls /healthz on both
 make dev-stop        # stop background runners
 make dev-logs        # tail all six log streams
 make dev-clean       # nuke .dev/ entirely
 ```
+
+`make dev` (background) vs `make dev-fg` (foreground):
+
+| Concern             | `make dev` (background)              | `make dev-fg` (foreground-parallel) |
+| ------------------- | ------------------------------------ | ----------------------------------- |
+| Returns immediately | yes — operator keeps the shell       | no — blocks until Ctrl-C            |
+| PID tracking        | `.dev/<svc>.pid` written              | none — children of the make process |
+| Logs                | files only (3 streams per service)   | `tee` to file + stdout (1 stream)   |
+| Signal propagation  | requires `make dev-stop`              | natural via job control + `wait`    |
+| Best for            | local iteration                       | cloud / CI / Docker / k8s           |
+
+`make dev-install` runs the fastify and fastapi installs **in parallel** via
+`$(MAKE) -j2 dev-install-fastify dev-install-fastapi` (mirrors the reference
+platform pattern). Output interleaves on the terminal — accepted trade-off
+for a faster install.
 
 `make dev`:
 
@@ -276,6 +293,33 @@ make prod-logs       # tail all six log streams
 make prod-healthz    # curl /healthz on both servers
 make prod-clean      # nuke .prod/ entirely
 ```
+
+### Diagnostics — `make dev-doctor` / `make prod-doctor`
+
+Run these any time something fails during install or launch. They are
+read-only and emit a sectioned PASS/WARN/FAIL report covering:
+
+- host tools (node / npm / uv / python3 versions)
+- env state (UV_NATIVE_TLS, SSL_CERT_FILE, PYTHON_REGISTRY_URL, NPM_REGISTRY,
+  proxy vars)
+- TLS reachability — curl-probe the configured Python registry; curl uses
+  the macOS Keychain, so a curl-PASS + uv-FAIL points at `UV_NATIVE_TLS`
+- uv resolver smoke — `uv pip install --dry-run uvicorn` in a temp venv
+- sibling layout under `ployglots/` (symlink target, missing entries)
+- staging dir state (`.dev/` or `.prod/`) — venv health, node_modules
+  shape; symlink-vs-real-dir is mode-aware (warn if dev has copies, warn
+  if prod has symlinks)
+- port bindings on `FASTIFY_PORT` / `FASTAPI_PORT` (or their PROD_*
+  overrides)
+
+```bash
+make dev-doctor      # before/after `make dev` — surface install + TLS issues
+make prod-doctor     # before/after `make prod`
+```
+
+The script lives at `scripts/workspace/runtime-doctor.sh`; invoke directly
+with `bash scripts/workspace/runtime-doctor.sh dev|prod` if you need to
+run it outside the make wrapper.
 
 How prod differs from dev:
 
@@ -336,7 +380,7 @@ etc.).
 | `skip: NODE_PKGS empty` / `skip: PY_PKGS empty`     | Step 2 skipped or `Makefile.entries` not generated     | Re-run `make bootstrap`                      |
 | `FAIL: <path> exists as a real directory` (exit 67) | Ran `make init-clone` on `release/main`               | Use `make bootstrap` instead (or `BOOTSTRAP_MODE=reemit`) |
 | `branch=HEAD → BOOTSTRAP_MODE=clone` on a `release/main` CI run | Detached HEAD, branch detection wrong         | `BOOTSTRAP_MODE=reemit make bootstrap`       |
-| `uv pip install` → `invalid peer certificate: UnknownIssuer` (Artifactory / corp proxy) | uv 0.9+ ships its own webpki CA list and ignores the macOS Keychain | Add `UV_NATIVE_TLS=true` to `.env` (see "Corporate-network setup") |
+| `uv pip install` → `invalid peer certificate: UnknownIssuer` (Artifactory / corp proxy) | uv 0.9+ ships its own webpki CA list and ignores the macOS Keychain | Add `UV_NATIVE_TLS=true` to `.env`; confirm with `make dev-doctor` (see "Corporate-network setup") |
 | `port <N> in use` from `make dev` / `make prod`     | Other runner still alive, or docker compose holding the port | `make dev-stop` / `make prod-stop`; if compose: `docker compose down` |
 | `port <N> still in use after cleanup` (`make dev`)  | Foreign process bound to FASTIFY/FASTAPI_PORT          | `lsof -iTCP:<N> -sTCP:LISTEN -nP` — kill or override `FASTIFY_PORT` / `FASTAPI_PORT` |
 
@@ -353,13 +397,15 @@ etc.).
 | Refresh manifests after editing `workspace.toml`                  | `make bootstrap` (idempotent on either branch)       |
 | Hydrate as in-tree subtrees on a non-release branch (rare)        | `make init-subtree`                                  |
 | Just lock-emit + submodule init (no hydrate, no manifest emit)    | `make init`                                          |
-| Run both servers in dev mode (live edits flow into siblings)      | `make dev` / foreground: `make dev-fastify` / `make dev-fastapi` |
+| Run both servers in dev mode (live edits flow into siblings)      | `make dev` (bg) / `make dev-fg` (fg, cloud-canonical) / per-svc: `make dev-fastify` / `make dev-fastapi` |
+| Health-check both dev servers                                     | `make dev-healthz`                                   |
 | Stop dev servers / nuke `.dev/` staging                           | `make dev-stop` / `make dev-clean`                   |
 | Run both servers in prod mode (frozen, NODE_ENV=production)       | `make prod` / foreground: `make prod-fastify` / `make prod-fastapi` |
 | Stop prod servers / nuke `.prod/` staging                         | `make prod-stop` / `make prod-clean`                 |
 | Tail all six log streams                                          | `make dev-logs` *or* `make prod-logs`                |
 | Health-check both prod servers                                    | `make prod-healthz`                                  |
 | Trust corporate Artifactory cert (uv `UnknownIssuer` fix)         | Add `UV_NATIVE_TLS=true` to `.env`                   |
+| Diagnose install / TLS / port issues                              | `make dev-doctor` *or* `make prod-doctor`            |
 
 Related docs:
 

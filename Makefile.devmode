@@ -190,7 +190,12 @@ dev-install-fastapi: ## Create .dev/fastapi venv and install fastapi_server + pr
 	  -e "$(APP_YAML_FETCH_CONFIG_DIR)/packages/py"
 
 .PHONY: dev-install
-dev-install: dev-preflight dev-install-fastify dev-install-fastapi ## Install both dev stages
+dev-install: dev-preflight ## Install both dev stages in parallel (sub-make -j2)
+	@# Mirrors the reference platform's `install: $(MAKE) -j2 install-pnpm install-py`.
+	@# fastify and fastapi installs are independent (separate staging dirs,
+	@# separate package managers) so running them in parallel is a strict
+	@# wall-time win. Output interleaves on the terminal — accepted trade-off.
+	@$(MAKE) -j2 dev-install-fastify dev-install-fastapi
 
 # ---------------------------------------------------------------------------
 # foreground runners
@@ -301,3 +306,75 @@ dev-logs: ## Tail all six dev log files (setup / request / error × fastify / fa
 .PHONY: dev-clean
 dev-clean: dev-stop ## Remove .dev/ staging entirely (forces re-install on next run)
 	rm -rf $(DEV_DIR)
+
+# ---------------------------------------------------------------------------
+# foreground-parallel runner — cloud / CI canonical shape
+#
+# Mirrors the reference platform Makefile pattern:
+#   @$(MAKE) dev-fastify & $(MAKE) dev-fastapi & wait
+#   ./<server> 2>&1 | tee logs/<name>.log
+#
+# Differs from `make dev` (background-detach with PID files) — this one
+# blocks until Ctrl-C, runs both servers as direct children of the make
+# process, and pipes their merged stdout+stderr through `tee` so:
+#   - container runtimes (Docker, k8s, Cloud Run, Fly) capture stdout
+#   - operators tailing $(DEV_DIR)/<name>.log still work
+#   - SIGTERM to the make process propagates to both children
+#   - no PID files / lsof / pkill rituals are needed
+#
+# Use this in cloud / CI; use `make dev` (background) for local convenience.
+# ---------------------------------------------------------------------------
+
+.PHONY: dev-fg
+dev-fg: dev-stop dev-install ## Foreground parallel runner (cloud-canonical; Ctrl-C to stop)
+	@# Pre-flight: clear any docker stack holding the dev ports.
+	@if docker info >/dev/null 2>&1; then \
+	  $(COMPOSE) down --remove-orphans >/dev/null 2>&1 || true; \
+	fi
+	@# Wait up to 10s for LISTEN bindings from prior runs to clear.
+	@for port in $(FASTIFY_PORT) $(FASTAPI_PORT); do \
+	  for i in 1 2 3 4 5 6 7 8 9 10; do \
+	    lsof -tiTCP:$$port -sTCP:LISTEN >/dev/null 2>&1 || break; \
+	    sleep 1; \
+	  done; \
+	  if lsof -tiTCP:$$port -sTCP:LISTEN >/dev/null 2>&1; then \
+	    echo "==> port $$port still in use after cleanup:"; \
+	    lsof -iTCP:$$port -sTCP:LISTEN -nP || true; \
+	    exit 1; \
+	  fi; \
+	done
+	@mkdir -p $(DEV_DIR)
+	@: > $(DEV_DIR)/fastify.log
+	@: > $(DEV_DIR)/fastapi.log
+	@echo ""
+	@echo "==> dev-fg: foreground parallel"
+	@echo "  fastify: http://127.0.0.1:$(FASTIFY_PORT)   (logs: $(DEV_DIR)/fastify.log + stdout)"
+	@echo "  fastapi: http://127.0.0.1:$(FASTAPI_PORT)   (logs: $(DEV_DIR)/fastapi.log + stdout)"
+	@echo "  Ctrl-C to stop both"
+	@echo ""
+	@( cd $(DEV_FASTIFY_APP) && \
+	     LOG_DIR=$(DEV_DIR) PORT=$(FASTIFY_PORT) POLYGLOT_DEBUG=1 \
+	     node main.mjs 2>&1 | tee $(DEV_DIR)/fastify.log ) & \
+	 ( cd $(SERVER_FASTAPI) && \
+	     LOG_DIR=$(DEV_DIR) PORT=$(FASTAPI_PORT) POLYGLOT_DEBUG=1 PYTHONDONTWRITEBYTECODE=1 \
+	     $(DEV_VENV)/bin/python main.py 2>&1 | tee $(DEV_DIR)/fastapi.log ) & \
+	 wait
+
+.PHONY: dev-healthz
+dev-healthz: ## Curl /healthz on both dev servers (sleeps 5s first; safe to chain after `make dev`)
+	@sleep 5
+	@echo "==> fastify  http://127.0.0.1:$(FASTIFY_PORT)/healthz"
+	@curl -fsS --max-time 5 http://127.0.0.1:$(FASTIFY_PORT)/healthz || echo "fastify: unreachable"
+	@echo "==> fastapi  http://127.0.0.1:$(FASTAPI_PORT)/healthz"
+	@curl -fsS --max-time 5 http://127.0.0.1:$(FASTAPI_PORT)/healthz || echo "fastapi: unreachable"
+
+# ---------------------------------------------------------------------------
+# diagnostics
+# ---------------------------------------------------------------------------
+
+.PHONY: dev-doctor
+dev-doctor: ## Diagnose dev runtime: tools, certs, registry, sibling layout, staging, ports
+	@DEV_DIR='$(DEV_DIR)' DEV_FASTIFY_APP='$(DEV_FASTIFY_APP)' DEV_VENV='$(DEV_VENV)' \
+	  FASTIFY_PORT='$(FASTIFY_PORT)' FASTAPI_PORT='$(FASTAPI_PORT)' \
+	  UV_PYTHON='$(UV_PYTHON)' \
+	  bash $(ROOT_DIR)/scripts/workspace/runtime-doctor.sh dev

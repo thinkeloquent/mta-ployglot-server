@@ -263,3 +263,15 @@ prod-healthz: ## Curl /healthz on both prod servers
 .PHONY: prod-clean
 prod-clean: prod-stop ## Remove .prod/ staging entirely (forces re-install on next run)
 	rm -rf $(PROD_DIR)
+
+# ---------------------------------------------------------------------------
+# diagnostics
+# ---------------------------------------------------------------------------
+
+.PHONY: prod-doctor
+prod-doctor: ## Diagnose prod runtime: tools, certs, registry, sibling layout, staging, ports
+	@PROD_DIR='$(PROD_DIR)' PROD_FASTIFY_APP='$(PROD_FASTIFY_APP)' PROD_VENV='$(PROD_VENV)' \
+	  PROD_FASTIFY_PORT='$(PROD_FASTIFY_PORT)' PROD_FASTAPI_PORT='$(PROD_FASTAPI_PORT)' \
+	  FASTIFY_PORT='$(FASTIFY_PORT)' FASTAPI_PORT='$(FASTAPI_PORT)' \
+	  UV_PYTHON='$(UV_PYTHON)' \
+	  bash $(ROOT_DIR)/scripts/workspace/runtime-doctor.sh prod
