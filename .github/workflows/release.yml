@@ -16,6 +16,8 @@ name: Release (merge + subtree assemble)
 # To run: Actions → "Release (merge + subtree assemble)" → Run workflow.
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       source:
@@ -31,9 +33,10 @@ permissions:
   contents: write   # push the merge + subtree commits to the release branch
 
 # Serialize same-target assemblies (don't kill in flight). Different release
-# targets run in parallel.
+# targets run in parallel. On push, inputs.target is empty — fall back to the
+# default release branch so concurrent main pushes serialize on the same group.
 concurrency:
-  group: release-${{ inputs.target }}
+  group: release-${{ inputs.target || 'release/main' }}
   cancel-in-progress: false
 
 jobs:
@@ -41,8 +44,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      SOURCE_REF: ${{ inputs.source }}
-      RELEASE_REF: ${{ inputs.target }}
+      # Push-triggered runs have empty inputs.*; fall back to the same defaults
+      # the workflow_dispatch form advertises so the steps below behave
+      # identically regardless of trigger.
+      SOURCE_REF: ${{ inputs.source || 'main' }}
+      RELEASE_REF: ${{ inputs.target || 'release/main' }}
     steps:
       - name: Checkout (full history)
         uses: actions/checkout@v4
