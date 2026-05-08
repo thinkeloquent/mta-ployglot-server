@@ -1,0 +1,265 @@
+# Makefile.prod — host-direct prod mode (no docker).
+#
+# Mirror of Makefile.devmode with prod semantics:
+#   - .prod/ staging (parallel to .dev/)
+#   - npm/uv install COPIES siblings into the runtime tree instead of
+#     symlinking — live edits in ../<sibling>/ do NOT flow into a running
+#     prod server, which is the entire point of "prod mode"
+#   - non-editable installs (no `-e` for uv pip install)
+#   - npm install with `--omit=dev` — vitest et al. stay out of the runtime
+#     tree
+#   - NODE_ENV=production at install + run, no `node --watch`
+#   - fastapi runs under uvicorn with $(PROD_FASTAPI_WORKERS) workers
+#   - strict port cleanup: only kills PIDs we wrote to .prod/*.pid (no
+#     `pkill -f` patterns that could match unrelated processes)
+#
+# When something is co-developed and you want live edits, use `make dev`.
+# When you want a copy-and-freeze runtime that mirrors what shipping looks
+# like, use `make prod`.
+
+# Lifecycle 25 reads APP_YAML_FIXTURES_DIR — same override as Makefile.devmode
+# because server/config/ holds the canonical yaml fixtures.
+export APP_YAML_FIXTURES_DIR := $(CURDIR)/server/config
+
+# ---------------------------------------------------------------------------
+# preflight
+# ---------------------------------------------------------------------------
+
+.PHONY: prod-preflight
+prod-preflight: ## Abort early if node / npm / uv are missing
+	@missing=""; \
+	for bin in node npm; do command -v $$bin >/dev/null || missing="$$missing $$bin"; done; \
+	command -v uv >/dev/null || missing="$$missing uv"; \
+	if [ -n "$$missing" ]; then \
+	  echo "==> missing required tools:$$missing"; \
+	  echo "    install uv:  curl -LsSf https://astral.sh/uv/install.sh | sh"; \
+	  echo "    install node: use nvm / homebrew / nodejs.org"; \
+	  exit 1; \
+	fi
+
+# ---------------------------------------------------------------------------
+# Sibling prebuild — same TS twins as dev. Building dist/ is a precondition
+# because every entry's `package.json#main` points at `dist/index.js`.
+# ---------------------------------------------------------------------------
+
+.PHONY: prod-prebuild-siblings
+prod-prebuild-siblings: ## Build dist/ in every sibling ts twin (required before prod-install on fresh clones)
+	@for d in $(TS_PREBUILD_DIRS); do \
+	  if [ ! -d "$$d" ]; then echo "==> skip: $$d (not present)"; continue; fi; \
+	  echo "==> $$d"; \
+	  (cd "$$d" && \
+	    if [ -f package-lock.json ]; then NODE_ENV=production npm ci --omit=dev --no-audit --no-fund; \
+	    else echo "==> no package-lock.json — npm install (will write one)"; \
+	         NODE_ENV=production npm install --omit=dev --no-audit --no-fund; fi && \
+	    npm run build) || exit $$?; \
+	done
+	@echo "==> sibling ts twins built (prod)"
+
+# ---------------------------------------------------------------------------
+# install — fastify side
+# ---------------------------------------------------------------------------
+
+.PHONY: prod-install-fastify
+prod-install-fastify: prod-prebuild-siblings ## Build bootstrap into .prod/fastify + stage server/fastify into .prod/fastify-app (no symlinks)
+	@test -d $(BOOTSTRAP_DIR)/fastify_server || { echo "submodule not initialized; run: make init"; exit 1; }
+	@mkdir -p $(PROD_FASTIFY)
+	@command -v rsync >/dev/null && \
+	  rsync -a --delete --exclude node_modules --exclude dist --exclude .smoke-logs \
+	    $(BOOTSTRAP_DIR)/fastify_server/ $(PROD_FASTIFY)/ || \
+	  cp -R $(BOOTSTRAP_DIR)/fastify_server/. $(PROD_FASTIFY)/
+	@# Build the bootstrap. `--omit=dev` strips test/build-only deps from the
+	@# runtime tree; the build step runs separately below.
+	cd $(PROD_FASTIFY) && \
+	  if [ -f package-lock.json ]; then NODE_ENV=production npm ci --omit=dev --no-audit --no-fund; \
+	  else echo "==> no package-lock.json — npm install (will write one)"; \
+	       NODE_ENV=production npm install --omit=dev --no-audit --no-fund; fi
+	cd $(PROD_FASTIFY) && npm run build
+	@# Stage the standalone app (server/fastify) into .prod/fastify-app.
+	@# Critical difference vs Makefile.devmode: we DO NOT replace the
+	@# npm-installed sibling deps with symlinks afterward. `npm ci` resolves
+	@# every `file:` dep in package.json by COPYING the sibling sources into
+	@# node_modules. That's the prod contract — frozen, not co-edited.
+	@mkdir -p $(PROD_FASTIFY_APP)
+	@command -v rsync >/dev/null && \
+	  rsync -a --delete --exclude node_modules \
+	    $(SERVER_FASTIFY)/ $(PROD_FASTIFY_APP)/ || \
+	  cp -R $(SERVER_FASTIFY)/. $(PROD_FASTIFY_APP)/
+	cd $(PROD_FASTIFY_APP) && \
+	  if [ -f package-lock.json ]; then NODE_ENV=production npm ci --omit=dev --no-audit --no-fund; \
+	  else echo "==> no package-lock.json — npm install (will write one)"; \
+	       NODE_ENV=production npm install --omit=dev --no-audit --no-fund; fi
+	@# Bootstrap is built locally (above), not published — overwrite the
+	@# npm-resolved copy with the freshly-built tree so the local build wins
+	@# over whatever stale artifact npm hydrated.
+	@rm -rf $(PROD_FASTIFY_APP)/node_modules/fastify-server
+	@cp -R $(PROD_FASTIFY) $(PROD_FASTIFY_APP)/node_modules/fastify-server
+	@echo "==> prod-install-fastify complete: $(PROD_FASTIFY_APP)"
+
+# ---------------------------------------------------------------------------
+# install — fastapi side
+# ---------------------------------------------------------------------------
+
+.PHONY: prod-install-fastapi
+prod-install-fastapi: ## Create .prod/fastapi venv and install bootstrap + sibling pys (non-editable)
+	@test -d $(BOOTSTRAP_DIR)/fastapi_server || { echo "submodule not initialized; run: make init"; exit 1; }
+	@for d in \
+	  $(PRINT_ROUTES_DIR)/packages/py \
+	  $(FETCH_CLIENT_DIR)/packages/py \
+	  $(ENV_RESOLVE_DIR)/packages/py \
+	  $(APP_YAML_LOADER_DIR)/packages/py \
+	  $(APP_YAML_OVERWRITE_DIR)/packages/engine-py \
+	  $(APP_YAML_OVERWRITE_DIR)/packages/applier-py \
+	  $(APP_YAML_CONFIG_DIR)/packages/py \
+	  $(APP_YAML_FETCH_CONFIG_DIR)/packages/py; do \
+	  test -d "$$d" || { echo "==> $$d not found"; exit 1; }; \
+	done
+	@mkdir -p $(PROD_FASTAPI)
+	@test -d $(PROD_VENV) || uv venv $(PROD_VENV) --python $(UV_PYTHON)
+	@# No `-e` flag → uv installs by copying built wheels / sdists into the
+	@# venv's site-packages. Live edits in ../<sibling>/ do not propagate.
+	uv pip install --python $(PROD_VENV)/bin/python \
+	  "$(BOOTSTRAP_DIR)/fastapi_server" \
+	  "$(PRINT_ROUTES_DIR)/packages/py" \
+	  "$(FETCH_CLIENT_DIR)/packages/py" \
+	  "$(ENV_RESOLVE_DIR)/packages/py" \
+	  "$(APP_YAML_LOADER_DIR)/packages/py" \
+	  "$(APP_YAML_OVERWRITE_DIR)/packages/engine-py" \
+	  "$(APP_YAML_OVERWRITE_DIR)/packages/applier-py" \
+	  "$(APP_YAML_CONFIG_DIR)/packages/py" \
+	  "$(APP_YAML_FETCH_CONFIG_DIR)/packages/py" \
+	  "uvicorn[standard]==0.40.0"
+	@echo "==> prod-install-fastapi complete: $(PROD_VENV)"
+
+.PHONY: prod-install
+prod-install: prod-preflight prod-install-fastify prod-install-fastapi ## Install both prod stages
+
+.PHONY: prod-build
+prod-build: prod-install ## Alias — full prod build (both stages)
+
+# ---------------------------------------------------------------------------
+# foreground runners — useful for an operator running prod by hand or for
+# CI smoke checks that need stdout/stderr in the foreground.
+# ---------------------------------------------------------------------------
+
+.PHONY: prod-fastify
+prod-fastify: prod-install-fastify ## Run fastify in the foreground with NODE_ENV=production (no --watch)
+	@if lsof -tiTCP:$(PROD_FASTIFY_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+	  echo "==> port $(PROD_FASTIFY_PORT) in use — run 'make prod-stop' or override PROD_FASTIFY_PORT"; exit 1; fi
+	@echo "==> fastify (prod) http://$(PROD_FASTIFY_HOST):$(PROD_FASTIFY_PORT) (Ctrl-C to stop)"
+	cd $(PROD_FASTIFY_APP) && \
+	  NODE_ENV=production HOST=$(PROD_FASTIFY_HOST) PORT=$(PROD_FASTIFY_PORT) node main.mjs
+
+.PHONY: prod-fastapi
+prod-fastapi: prod-install-fastapi ## Run fastapi in the foreground (single-worker; see PROD_FASTAPI_WORKERS note)
+	@if lsof -tiTCP:$(PROD_FASTAPI_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+	  echo "==> port $(PROD_FASTAPI_PORT) in use — run 'make prod-stop' or override PROD_FASTAPI_PORT"; exit 1; fi
+	@echo "==> fastapi (prod) http://$(PROD_FASTAPI_HOST):$(PROD_FASTAPI_PORT) (Ctrl-C to stop)"
+	@# Run through `python main.py` so `build_app()` attaches the same
+	@# lifecycle/route addons as dev. main.py's cli_main() is single-worker
+	@# today (calls uvicorn.run with an app *instance*, which uvicorn cannot
+	@# fork). PROD_FASTAPI_WORKERS is wired in Makefile.vars but is a no-op
+	@# until main.py exposes a sync factory callable (e.g. `make_app()`)
+	@# that uvicorn can import-string-load with `--workers $(WORKERS)`.
+	cd $(SERVER_FASTAPI) && \
+	  HOST=$(PROD_FASTAPI_HOST) PORT=$(PROD_FASTAPI_PORT) APP_ENV=production \
+	  PYTHONDONTWRITEBYTECODE=1 \
+	  $(PROD_VENV)/bin/python main.py
+
+# ---------------------------------------------------------------------------
+# background runners — same shape as `make dev` but without --watch and
+# without `pkill -f` patterns in stop.
+# ---------------------------------------------------------------------------
+
+.PHONY: prod
+prod: prod-stop prod-install ## Start both prod servers in background (host direct-run)
+	@# If a docker compose stack is up, bring it down so prod can claim the
+	@# ports. Skip silently when the docker daemon isn't running.
+	@if docker info >/dev/null 2>&1; then \
+	  $(COMPOSE) down --remove-orphans >/dev/null 2>&1 || true; \
+	fi
+	@for port in $(PROD_FASTIFY_PORT) $(PROD_FASTAPI_PORT); do \
+	  for i in 1 2 3 4 5 6 7 8 9 10; do \
+	    lsof -tiTCP:$$port -sTCP:LISTEN >/dev/null 2>&1 || break; \
+	    sleep 1; \
+	  done; \
+	  if lsof -tiTCP:$$port -sTCP:LISTEN >/dev/null 2>&1; then \
+	    echo "==> port $$port still in use after cleanup:"; \
+	    lsof -iTCP:$$port -sTCP:LISTEN -nP || true; \
+	    exit 1; \
+	  fi; \
+	done
+	@mkdir -p $(PROD_DIR)
+	@: > $(PROD_DIR)/fastify.log
+	@: > $(PROD_DIR)/fastify.request.log
+	@: > $(PROD_DIR)/fastify.error.log
+	@: > $(PROD_DIR)/fastapi.log
+	@: > $(PROD_DIR)/fastapi.request.log
+	@: > $(PROD_DIR)/fastapi.error.log
+	@echo "==> starting fastify (:$(PROD_FASTIFY_PORT)) NODE_ENV=production"
+	cd $(PROD_FASTIFY_APP) && \
+	  NODE_ENV=production LOG_DIR=$(PROD_DIR) HOST=$(PROD_FASTIFY_HOST) PORT=$(PROD_FASTIFY_PORT) \
+	  node main.mjs > $(PROD_DIR)/fastify.log 2> $(PROD_DIR)/fastify.error.log & \
+	  echo $$! > $(PROD_DIR)/fastify.pid
+	@echo "==> starting fastapi (:$(PROD_FASTAPI_PORT))"
+	cd $(SERVER_FASTAPI) && \
+	  APP_ENV=production LOG_DIR=$(PROD_DIR) HOST=$(PROD_FASTAPI_HOST) PORT=$(PROD_FASTAPI_PORT) \
+	  PYTHONDONTWRITEBYTECODE=1 \
+	  $(PROD_VENV)/bin/python main.py \
+	  > $(PROD_DIR)/fastapi.log 2> $(PROD_DIR)/fastapi.error.log & \
+	  echo $$! > $(PROD_DIR)/fastapi.pid
+	@echo ""
+	@echo "  fastify: http://$(PROD_FASTIFY_HOST):$(PROD_FASTIFY_PORT)"
+	@echo "    setup:   $(PROD_DIR)/fastify.log"
+	@echo "    request: $(PROD_DIR)/fastify.request.log"
+	@echo "    error:   $(PROD_DIR)/fastify.error.log"
+	@echo "  fastapi: http://$(PROD_FASTAPI_HOST):$(PROD_FASTAPI_PORT)"
+	@echo "    setup:   $(PROD_DIR)/fastapi.log"
+	@echo "    request: $(PROD_DIR)/fastapi.request.log"
+	@echo "    error:   $(PROD_DIR)/fastapi.error.log"
+	@echo ""
+	@echo "  tail all:    make prod-logs"
+	@echo "  healthcheck: make prod-healthz"
+	@echo "  stop:        make prod-stop"
+
+.PHONY: prod-stop
+prod-stop: ## Stop background prod servers (idempotent; only kills our PIDs)
+	@# Strict cleanup: only PIDs we wrote to .prod/*.pid. We deliberately do
+	@# NOT use `pkill -f` patterns here — that's a dev-mode concession; in
+	@# prod we never want to risk killing an unrelated process.
+	@for svc in fastify fastapi; do \
+	  pidfile=$(PROD_DIR)/$$svc.pid; \
+	  if [ -f $$pidfile ]; then \
+	    pid=$$(cat $$pidfile); \
+	    if kill -0 $$pid 2>/dev/null; then \
+	      kill -TERM $$pid 2>/dev/null || true; \
+	      for i in 1 2 3 4 5 6 7 8 9 10; do \
+	        kill -0 $$pid 2>/dev/null || break; \
+	        sleep 1; \
+	      done; \
+	      kill -0 $$pid 2>/dev/null && kill -KILL $$pid 2>/dev/null || true; \
+	    fi; \
+	    rm -f $$pidfile; \
+	  fi; \
+	done
+	@echo "==> prod servers stopped"
+
+.PHONY: prod-restart
+prod-restart: prod-stop prod ## Restart both prod servers (stop then start)
+
+.PHONY: prod-logs
+prod-logs: ## Tail all six prod log files (setup / request / error × fastify / fastapi)
+	@test -d $(PROD_DIR) || { echo "no prod session — run 'make prod' first"; exit 1; }
+	tail -f \
+	  $(PROD_DIR)/fastify.log $(PROD_DIR)/fastify.request.log $(PROD_DIR)/fastify.error.log \
+	  $(PROD_DIR)/fastapi.log $(PROD_DIR)/fastapi.request.log $(PROD_DIR)/fastapi.error.log
+
+.PHONY: prod-healthz
+prod-healthz: ## Curl /healthz on both prod servers
+	@echo "==> fastify  $(PROD_FASTIFY_HOST):$(PROD_FASTIFY_PORT)/healthz"
+	@curl -fsS --max-time 5 http://$(PROD_FASTIFY_HOST):$(PROD_FASTIFY_PORT)/healthz || echo "fastify: unreachable"
+	@echo "==> fastapi  $(PROD_FASTAPI_HOST):$(PROD_FASTAPI_PORT)/healthz"
+	@curl -fsS --max-time 5 http://$(PROD_FASTAPI_HOST):$(PROD_FASTAPI_PORT)/healthz || echo "fastapi: unreachable"
+
+.PHONY: prod-clean
+prod-clean: prod-stop ## Remove .prod/ staging entirely (forces re-install on next run)
+	rm -rf $(PROD_DIR)

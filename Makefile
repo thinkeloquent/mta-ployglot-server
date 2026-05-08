@@ -22,6 +22,10 @@ include Makefile.vars
 include Makefile.compose
 include Makefile.devmode
 
+# Prod-mode runner (host-direct, parallel to devmode). Uses .prod/ staging,
+# copies (not symlinks) for siblings, NODE_ENV=production, no --watch.
+-include Makefile.prod
+
 # Smoke targets for the app-yaml chain (F01..F06 verification).
 -include Makefile.smoke
 

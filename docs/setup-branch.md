@@ -196,6 +196,12 @@ This runs:
   `fetch-client`, `env-resolve`, `app-yaml-loader`, `app-yaml-overwrite`,
   `app-yaml-config`, `app-yaml-fetch-config`, `uvicorn[standard]`).
 
+> **Note:** `make install` is sufficient when you run the servers directly
+> from `server/fastify/` and `server/fastapi/`. The Step 6 runners
+> (`make dev` / `make prod`) stage their own copies under `.dev/` /
+> `.prod/` and invoke their own install steps — they do NOT depend on
+> `make install`.
+
 ---
 
 ## Step 5 — Verify
@@ -228,6 +234,99 @@ You're done when:
 
 ---
 
+## Step 6 — Run the servers
+
+Two host-direct run modes are available. They stage independent copies of
+the runtime tree under `.dev/` and `.prod/` so you never mutate
+`server/fastify/` or `server/fastapi/` directly.
+
+### Dev mode — co-developed siblings, live edits flow
+
+```bash
+make dev             # background: stages .dev/, runs both servers, writes pids+logs
+make dev-fastify     # foreground fastify, with `node --watch`
+make dev-fastapi     # foreground fastapi
+make dev-stop        # stop background runners
+make dev-logs        # tail all six log streams
+make dev-clean       # nuke .dev/ entirely
+```
+
+`make dev`:
+
+1. Builds `dist/` in every TS twin (`make build.npm` / `dev-prebuild-siblings`).
+2. Stages `ployglots/mta-ployglot-server-bootstrap/fastify_server` →
+   `.dev/fastify` and `npm ci`s + builds it.
+3. Stages `server/fastify` → `.dev/fastify-app`, `npm ci`s, then **replaces
+   sibling deps in `node_modules/` with symlinks** so live edits in
+   `../<sibling>/` flow into the running server without reinstall.
+4. Creates `.dev/fastapi/.venv` and `uv pip install -e` every workspace
+   py twin (also live-edit-friendly).
+5. Launches both servers in the background with `POLYGLOT_DEBUG=1` and
+   `node --watch`.
+
+### Prod mode — frozen runtime, no live edits
+
+```bash
+make prod            # background: stages .prod/, runs both servers
+make prod-fastify    # foreground fastify, NODE_ENV=production, no --watch
+make prod-fastapi    # foreground fastapi (single-worker today; see note below)
+make prod-stop       # graceful TERM → 10s → KILL, by-PID only
+make prod-restart    # = prod-stop && prod
+make prod-logs       # tail all six log streams
+make prod-healthz    # curl /healthz on both servers
+make prod-clean      # nuke .prod/ entirely
+```
+
+How prod differs from dev:
+
+| Concern         | dev (`.dev/`)              | prod (`.prod/`)                        |
+| --------------- | -------------------------- | -------------------------------------- |
+| Sibling deps    | symlinked (live edits)     | `cp -R` after `npm ci` (frozen)        |
+| Python installs | `uv pip install -e <path>` | `uv pip install <path>` (non-editable) |
+| npm install     | full deps                  | `npm ci --omit=dev`                    |
+| Runtime env     | `POLYGLOT_DEBUG=1`, watch  | `NODE_ENV=production`, no watch        |
+| Stop semantics  | `pkill -f` + own PIDs      | own PIDs only (TERM → 10s → KILL)      |
+
+Default ports are shared (`FASTIFY_PORT=5100`, `FASTAPI_PORT=5200`), so
+`make dev` and `make prod` cannot run concurrently. Override
+`PROD_FASTIFY_PORT` / `PROD_FASTAPI_PORT` in `.env` to run side-by-side.
+
+> **Note on `PROD_FASTAPI_WORKERS`:** wired into `Makefile.vars` and
+> `.env.example` as a knob, but currently a no-op —
+> `server/fastapi/main.py` calls `uvicorn.run(app, ...)` with an instance
+> rather than an import-string factory, so uvicorn cannot fork workers.
+> Multi-worker prod requires `main.py` to expose a sync factory callable.
+
+---
+
+## Corporate-network setup (one-time, opt-in)
+
+The repo's install pipeline is registry-and-cert-aware. If you are on a
+machine where the package registries are reached through a corporate
+Artifactory / proxy that presents an internally-issued TLS cert, copy
+`.env.example` to `.env` and set:
+
+```bash
+# .env
+UV_NATIVE_TLS=true
+# PYTHON_REGISTRY_URL=https://artifactory.<corp>/api/pypi/pypi/simple/
+# SSL_CERT_FILE=/path/to/corp-ca.pem      # if uv still rejects the cert
+# NODE_EXTRA_CA_CERTS=/path/to/corp-ca.pem
+```
+
+`UV_NATIVE_TLS=true` makes `uv 0.9+` use the OS-native TLS stack (macOS
+Keychain) instead of its bundled rustls/webpki CA list. Without it, you
+will see `invalid peer certificate: UnknownIssuer` from any `uv pip
+install` that traverses the corporate proxy. `Makefile.vars` only exports
+the variable when set to a non-`0` value, so non-corp contributors are
+unaffected.
+
+See `.env.example` for the full set of corp knobs (`PIP_CERT`,
+`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `NO_PROXY`, `PYTHON_REGISTRY_URL`,
+etc.).
+
+---
+
 ## Failure-mode cheatsheet
 
 | Symptom                                             | Likely cause                                           | Fix                                          |
@@ -237,6 +336,9 @@ You're done when:
 | `skip: NODE_PKGS empty` / `skip: PY_PKGS empty`     | Step 2 skipped or `Makefile.entries` not generated     | Re-run `make bootstrap`                      |
 | `FAIL: <path> exists as a real directory` (exit 67) | Ran `make init-clone` on `release/main`               | Use `make bootstrap` instead (or `BOOTSTRAP_MODE=reemit`) |
 | `branch=HEAD → BOOTSTRAP_MODE=clone` on a `release/main` CI run | Detached HEAD, branch detection wrong         | `BOOTSTRAP_MODE=reemit make bootstrap`       |
+| `uv pip install` → `invalid peer certificate: UnknownIssuer` (Artifactory / corp proxy) | uv 0.9+ ships its own webpki CA list and ignores the macOS Keychain | Add `UV_NATIVE_TLS=true` to `.env` (see "Corporate-network setup") |
+| `port <N> in use` from `make dev` / `make prod`     | Other runner still alive, or docker compose holding the port | `make dev-stop` / `make prod-stop`; if compose: `docker compose down` |
+| `port <N> still in use after cleanup` (`make dev`)  | Foreign process bound to FASTIFY/FASTAPI_PORT          | `lsof -iTCP:<N> -sTCP:LISTEN -nP` — kill or override `FASTIFY_PORT` / `FASTAPI_PORT` |
 
 ---
 
@@ -251,6 +353,13 @@ You're done when:
 | Refresh manifests after editing `workspace.toml`                  | `make bootstrap` (idempotent on either branch)       |
 | Hydrate as in-tree subtrees on a non-release branch (rare)        | `make init-subtree`                                  |
 | Just lock-emit + submodule init (no hydrate, no manifest emit)    | `make init`                                          |
+| Run both servers in dev mode (live edits flow into siblings)      | `make dev` / foreground: `make dev-fastify` / `make dev-fastapi` |
+| Stop dev servers / nuke `.dev/` staging                           | `make dev-stop` / `make dev-clean`                   |
+| Run both servers in prod mode (frozen, NODE_ENV=production)       | `make prod` / foreground: `make prod-fastify` / `make prod-fastapi` |
+| Stop prod servers / nuke `.prod/` staging                         | `make prod-stop` / `make prod-clean`                 |
+| Tail all six log streams                                          | `make dev-logs` *or* `make prod-logs`                |
+| Health-check both prod servers                                    | `make prod-healthz`                                  |
+| Trust corporate Artifactory cert (uv `UnknownIssuer` fix)         | Add `UV_NATIVE_TLS=true` to `.env`                   |
 
 Related docs:
 
