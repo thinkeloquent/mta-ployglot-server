@@ -60,18 +60,40 @@ server.addHook("onReady", async () => {
   printRoutes(server);
 });
 
+// Per-request / per-error structured logging.
+//
+// Two sinks, selected by env:
+//   LOG_DIR=<path>   — append JSONL to <path>/fastify.{request,error}.log.
+//                      Used by host-direct dev mode (Makefile.devmode), which
+//                      points it at .dev/.
+//   LOG_CONSOLE=1    — write JSONL to stdout (request) / stderr (error).
+//                      Used by container runtimes where .dev/ paths are not
+//                      reachable; lines stream out via `docker logs`.
+//
+// LOG_DIR wins when both are set. When neither is set, no extra hooks are
+// installed (the framework's own stdout logger still emits server lifecycle
+// events).
 const logDir = process.env.LOG_DIR;
-if (logDir) {
-  mkdirSync(logDir, { recursive: true });
-  const reqLogFile = resolve(logDir, "fastify.request.log");
-  const errLogFile = resolve(logDir, "fastify.error.log");
-  const appendJson = (file, obj) => {
-    try {
-      appendFileSync(file, JSON.stringify(obj) + "\n");
-    } catch {}
-  };
+const logConsole = !logDir && /^(1|true|yes)$/i.test(process.env.LOG_CONSOLE ?? "");
+if (logDir || logConsole) {
+  let reqSink, errSink;
+  if (logDir) {
+    mkdirSync(logDir, { recursive: true });
+    const reqLogFile = resolve(logDir, "fastify.request.log");
+    const errLogFile = resolve(logDir, "fastify.error.log");
+    const appendJson = (file, obj) => {
+      try {
+        appendFileSync(file, JSON.stringify(obj) + "\n");
+      } catch {}
+    };
+    reqSink = (obj) => appendJson(reqLogFile, obj);
+    errSink = (obj) => appendJson(errLogFile, obj);
+  } else {
+    reqSink = (obj) => process.stdout.write(JSON.stringify({ kind: "request", ...obj }) + "\n");
+    errSink = (obj) => process.stderr.write(JSON.stringify({ kind: "error", ...obj }) + "\n");
+  }
   server.addHook("onResponse", async (req, reply) => {
-    appendJson(reqLogFile, {
+    reqSink({
       t: new Date().toISOString(),
       reqId: req.id,
       method: req.method,
@@ -81,7 +103,7 @@ if (logDir) {
     });
   });
   server.addHook("onError", async (req, _reply, err) => {
-    appendJson(errLogFile, {
+    errSink({
       t: new Date().toISOString(),
       reqId: req.id,
       method: req.method,

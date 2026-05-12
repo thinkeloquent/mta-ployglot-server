@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -56,20 +57,53 @@ async def build_app():
 
 
 def _install_log_middleware(app) -> None:
-    log_dir = os.environ.get("LOG_DIR")
-    if not log_dir:
-        return
-    log_path = Path(log_dir)
-    log_path.mkdir(parents=True, exist_ok=True)
-    req_log = log_path / "fastapi.request.log"
-    err_log = log_path / "fastapi.error.log"
+    """Install per-request / per-error structured logging.
 
-    def _append(path: Path, payload: dict) -> None:
-        try:
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(payload) + "\n")
-        except OSError:
-            pass
+    Two sinks, selected by env:
+
+      LOG_DIR=<path>   — append JSONL to <path>/fastapi.{request,error}.log.
+                         Used by host-direct dev mode (Makefile.devmode).
+      LOG_CONSOLE=1    — write JSONL to stdout (request) / stderr (error).
+                         Used by container runtimes where the dev log dir
+                         is unreachable; lines stream out via `docker logs`.
+
+    LOG_DIR wins when both are set. When neither is set, the middleware is
+    a no-op (uvicorn's own stdout logger still emits lifecycle/access lines).
+    """
+    log_dir = os.environ.get("LOG_DIR")
+    log_console = (
+        not log_dir
+        and (os.environ.get("LOG_CONSOLE", "").lower() in {"1", "true", "yes"})
+    )
+    if not (log_dir or log_console):
+        return
+
+    if log_dir:
+        log_path = Path(log_dir)
+        log_path.mkdir(parents=True, exist_ok=True)
+        req_log = log_path / "fastapi.request.log"
+        err_log = log_path / "fastapi.error.log"
+
+        def _append(path: Path, payload: dict) -> None:
+            try:
+                with path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(payload) + "\n")
+            except OSError:
+                pass
+
+        def emit_req(payload: dict) -> None:
+            _append(req_log, payload)
+
+        def emit_err(payload: dict) -> None:
+            _append(err_log, payload)
+    else:
+        def emit_req(payload: dict) -> None:
+            sys.stdout.write(json.dumps({"kind": "request", **payload}) + "\n")
+            sys.stdout.flush()
+
+        def emit_err(payload: dict) -> None:
+            sys.stderr.write(json.dumps({"kind": "error", **payload}) + "\n")
+            sys.stderr.flush()
 
     @app.middleware("http")
     async def _log_request(request: Request, call_next):
@@ -78,7 +112,7 @@ def _install_log_middleware(app) -> None:
         try:
             response = await call_next(request)
         except Exception as exc:  # noqa: BLE001
-            _append(err_log, {
+            emit_err({
                 "t": ts,
                 "method": request.method,
                 "path": request.url.path,
@@ -86,7 +120,7 @@ def _install_log_middleware(app) -> None:
                 "err": repr(exc),
             })
             raise
-        _append(req_log, {
+        emit_req({
             "t": ts,
             "method": request.method,
             "path": request.url.path,

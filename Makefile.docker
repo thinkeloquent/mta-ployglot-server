@@ -77,12 +77,38 @@ DOCKER_DESKTOP_APP       ?= Docker
 #   make docker-run.all DOCKER_RUN_EXTRA="--cpus=2 --memory=1g"
 DOCKER_RUN_EXTRA         ?=
 
+# Logging mode inside the container.
+#
+# The host-direct dev mode (Makefile.devmode) writes server logs to .dev/
+# files (fastify.log / fastify.request.log / fastify.error.log and the
+# fastapi.* equivalents). Those paths are NOT reachable from inside a
+# container, so for docker-mode we flip the runtime to write structured
+# per-request and per-error JSON to stdout / stderr instead — visible via
+# `make docker-log.fastify` / `docker logs <container>`.
+#
+# Implementation (see server/fastify/main.mjs and server/fastapi/main.py):
+#   LOG_DIR set     → JSONL files at <LOG_DIR>/{fastify,fastapi}.*.log
+#   LOG_CONSOLE=1   → JSONL to stdout (request) / stderr (error)
+#   neither set     → no per-request hooks; framework's stdout logger only
+#
+# Defaults below send everything to console. Override DOCKER_LOG_CONSOLE=0
+# to disable the JSONL middleware entirely (framework logs still flow to
+# stdout); or set DOCKER_LOG_DIR=<container-path> + bind-mount a writable
+# host volume to send JSONL to files inside the container instead.
+DOCKER_LOG_CONSOLE       ?= 1
+DOCKER_LOG_DIR           ?=
+
 # Derived: optional vault-related flags. Defined with `=` (recursively
 # expanded) so $(VAULT_MOUNT) is re-read each time — that lets a CLI
 # override take effect even though Makefile.docker is parsed before the
 # command-line variable is set.
 DOCKER_VAULT_RUN_FLAGS    = $(if $(strip $(VAULT_MOUNT)),-v $(VAULT_MOUNT):$(VAULT_MOUNT_TARGET):ro -e VAULT_SECRET_FILE=$(VAULT_MOUNT_TARGET),)
 DOCKER_VAULT_BUILD_FLAGS  = $(if $(strip $(VAULT_MOUNT)),--build-arg VAULT_SECRET_FILE=$(VAULT_MOUNT_TARGET),)
+
+# Derived: log-routing flags. LOG_DIR (if set) wins inside the runtime; we
+# emit it only when DOCKER_LOG_DIR is non-empty so the default container has
+# no LOG_DIR variable at all (avoids accidentally pointing at host paths).
+DOCKER_LOG_RUN_FLAGS      = $(if $(strip $(DOCKER_LOG_DIR)),-e LOG_DIR=$(DOCKER_LOG_DIR),-e LOG_CONSOLE=$(DOCKER_LOG_CONSOLE))
 
 # Common build flags applied to every `docker build` invocation. Pulls in
 # the NPM_REGISTRY SSOT (Makefile.vars) the same way compose builds do.
@@ -97,6 +123,7 @@ define DOCKER_RUN_BASE
 docker run -d \
   --restart=unless-stopped \
   --init \
+  $(DOCKER_LOG_RUN_FLAGS) \
   $(DOCKER_VAULT_RUN_FLAGS) \
   $(DOCKER_RUN_EXTRA)
 endef
