@@ -39,37 +39,75 @@ dev-preflight: ## Abort early if node / npm / uv are missing
 	fi
 
 # ---------------------------------------------------------------------------
-# Sibling prebuild
+# Sibling install + prebuild
 #
-# Every entry below is a TypeScript twin whose `package.json#main` points at
-# `dist/index.js`. Without a built dist, the symlinks created by
-# dev-install-fastify resolve to a package whose entry point doesn't exist,
-# and node fails at runtime on the first `import` of that package. Pure-mjs
-# siblings (packages/mjs, applier-mjs, engine-mjs) are NOT listed — they
-# consume sources directly with no build step.
+# Two separate concerns:
 #
-# `make dev-prebuild-siblings` runs npm install + npm run build in each
-# present dir. Missing dirs are skipped gracefully (a sibling absent from the
-# checkout simply isn't built). Honors the same NPM_REGISTRY / lockfile
-# fallback as dev-install-fastify.
+#   1. dev-install-siblings — runs `npm install` at every sibling ROOT that
+#      participates in dev mode (both TS twins and mjs siblings). Required
+#      because dev-install-fastify symlinks `<sibling>/packages/mjs` into
+#      `.dev/fastify-app/node_modules/@scope/name`, and Node's bare-import
+#      resolution from a source file inside that symlink walks UP the real
+#      path — i.e. it looks in `<sibling>/node_modules/`, not in
+#      `.dev/fastify-app/node_modules/`. Runtime deps like `js-yaml` and
+#      `lodash` therefore must live under `<sibling>/node_modules/`, which
+#      only happens if `npm install` ran at the sibling root (or a workspace
+#      member) so npm could hoist them via the sibling's `workspaces` field.
+#
+#   2. dev-prebuild-siblings — runs `npm run build` in the TS twin of every
+#      sibling that has one. Required because `package.json#main` of those
+#      siblings points at `dist/index.js`; without a built dist, the
+#      symlinks created by dev-install-fastify resolve to a package whose
+#      entry point doesn't exist. Pure-mjs siblings (packages/mjs,
+#      applier-mjs, engine-mjs) need no build step — they consume sources
+#      directly — but they still need step (1) for their runtime deps.
+#
+# `dev-prebuild-siblings` depends on `dev-install-siblings`, so callers
+# (dev-install-fastify, build.npm) need only depend on `dev-prebuild-siblings`
+# to get both. Missing dirs / missing package.json are skipped gracefully
+# so a sibling absent from the checkout doesn't break the pipeline.
 # ---------------------------------------------------------------------------
 
+# Sibling ROOTS that need workspace deps installed before symlinks are
+# created. Both TS-twin and mjs siblings end up here. APP_YAML_CONFIG_DIR
+# has no root package.json (its mjs package is at packages/mjs/ without a
+# workspaces declaration); skipped because its inner package has no deps.
+SIBLING_INSTALL_ROOTS := \
+  $(PRINT_ROUTES_DIR) \
+  $(ENV_RESOLVE_DIR) \
+  $(FETCH_CLIENT_DIR) \
+  $(ROOT_DIR)/ployglots/mta-ployglot-pkg-figma-api \
+  $(ROOT_DIR)/ployglots/mta-ployglot-pkg-vault \
+  $(APP_YAML_LOADER_DIR) \
+  $(APP_YAML_OVERWRITE_DIR) \
+  $(APP_YAML_FETCH_CONFIG_DIR)
+
+# Subset of SIBLING_INSTALL_ROOTS whose TS twin needs a `npm run build` to
+# produce dist/. mjs-only siblings are intentionally absent.
 TS_PREBUILD_DIRS := \
   $(ENV_RESOLVE_DIR)/packages/ts \
   $(FETCH_CLIENT_DIR)/packages/ts \
   $(ROOT_DIR)/ployglots/mta-ployglot-pkg-figma-api/packages/ts \
   $(ROOT_DIR)/ployglots/mta-ployglot-pkg-vault/packages/ts
 
-.PHONY: dev-prebuild-siblings
-dev-prebuild-siblings: ## Build dist/ in every sibling ts twin (required before dev-install on fresh clones)
-	@for d in $(TS_PREBUILD_DIRS); do \
-	  if [ ! -d "$$d" ]; then echo "==> skip: $$d (not present)"; continue; fi; \
+.PHONY: dev-install-siblings
+dev-install-siblings: ## Install workspace deps in every sibling root that dev-install-fastify symlinks
+	@for d in $(SIBLING_INSTALL_ROOTS); do \
+	  if [ ! -f "$$d/package.json" ]; then echo "==> skip: $$d (no top-level package.json)"; continue; fi; \
 	  echo "==> $$d"; \
 	  (cd "$$d" && \
 	    if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
 	    else echo "==> no package-lock.json — npm install (will write one)"; \
-	         npm install --no-audit --no-fund; fi && \
-	    npm run build) || exit $$?; \
+	         npm install --no-audit --no-fund; fi) || exit $$?; \
+	done
+	@echo "==> sibling workspace deps installed"
+
+.PHONY: dev-prebuild-siblings
+dev-prebuild-siblings: dev-install-siblings ## Build dist/ in every sibling ts twin (required before dev-install on fresh clones)
+	@for d in $(TS_PREBUILD_DIRS); do \
+	  if [ ! -d "$$d" ]; then echo "==> skip: $$d (not present)"; continue; fi; \
+	  echo "==> $$d (build)"; \
+	  (cd "$$d" && npm run build) || exit $$?; \
 	done
 	@echo "==> sibling ts twins built"
 
