@@ -27,14 +27,14 @@ export APP_YAML_FIXTURES_DIR := $(CURDIR)/server/config
 # ---------------------------------------------------------------------------
 
 .PHONY: dev-preflight
-dev-preflight: ## Abort early if node / npm / uv are missing
+dev-preflight: ## Abort early if node / npm / poetry are missing
 	@missing=""; \
 	for bin in node npm; do command -v $$bin >/dev/null || missing="$$missing $$bin"; done; \
-	command -v uv >/dev/null || missing="$$missing uv"; \
+	command -v poetry >/dev/null || missing="$$missing poetry"; \
 	if [ -n "$$missing" ]; then \
 	  echo "==> missing required tools:$$missing"; \
-	  echo "    install uv:  curl -LsSf https://astral.sh/uv/install.sh | sh"; \
-	  echo "    install node: use nvm / homebrew / nodejs.org"; \
+	  echo "    install poetry: pipx install poetry  (or https://python-poetry.org/docs/#installation)"; \
+	  echo "    install node:   use nvm / homebrew / nodejs.org"; \
 	  exit 1; \
 	fi
 
@@ -196,7 +196,10 @@ dev-install-fastify: dev-prebuild-siblings ## Build bootstrap into .dev/fastify 
 	@ln -s $(APP_YAML_FETCH_CONFIG_DIR)/packages/mjs $(DEV_FASTIFY_APP)/node_modules/@ployglot/app-yaml-fetch-config
 
 .PHONY: dev-install-fastapi
-dev-install-fastapi: ## Create .dev/fastapi venv and install fastapi_server + print-routes-fastapi + fetch-http-client editable
+dev-install-fastapi: ## Install server/fastapi via poetry (in-project .venv at $(DEV_VENV)); editable sibling deps come from pyproject path entries
+	@# Pre-flight: every sibling that server/fastapi/pyproject.toml references via
+	@# `path = "..."` must exist on disk. Poetry will fail on a missing path with a
+	@# noisy traceback; these checks turn that into a one-line actionable error.
 	@test -d $(BOOTSTRAP_DIR)/fastapi_server || { echo "submodule not initialized; run: make init"; exit 1; }
 	@test -d $(PRINT_ROUTES_DIR)/packages/py || { \
 	  echo "==> $(PRINT_ROUTES_DIR)/packages/py not found — clone mta-ployglot-server-print-routes alongside this repo"; exit 1; }
@@ -214,18 +217,13 @@ dev-install-fastapi: ## Create .dev/fastapi venv and install fastapi_server + pr
 	  echo "==> $(APP_YAML_CONFIG_DIR)/packages/py not found — clone mta-ployglot-pkg-app-yaml-config into ployglots/"; exit 1; }
 	@test -d $(APP_YAML_FETCH_CONFIG_DIR)/packages/py || { \
 	  echo "==> $(APP_YAML_FETCH_CONFIG_DIR)/packages/py not found — clone mta-ployglot-pkg-app-yaml-fetch-config into ployglots/"; exit 1; }
-	@mkdir -p $(DEV_FASTAPI)
-	@test -d $(DEV_VENV) || uv venv $(DEV_VENV) --python $(UV_PYTHON)
-	uv pip install --python $(DEV_VENV)/bin/python \
-	  -e "$(BOOTSTRAP_DIR)/fastapi_server" \
-	  -e "$(PRINT_ROUTES_DIR)/packages/py" \
-	  -e "$(FETCH_CLIENT_DIR)/packages/py" \
-	  -e "$(ENV_RESOLVE_DIR)/packages/py" \
-	  -e "$(APP_YAML_LOADER_DIR)/packages/py" \
-	  -e "$(APP_YAML_OVERWRITE_DIR)/packages/engine-py" \
-	  -e "$(APP_YAML_OVERWRITE_DIR)/packages/applier-py" \
-	  -e "$(APP_YAML_CONFIG_DIR)/packages/py" \
-	  -e "$(APP_YAML_FETCH_CONFIG_DIR)/packages/py"
+	@# Force in-project venv so DEV_VENV ($(DEV_VENV)) is what poetry creates.
+	@# Switched off uv to avoid `invalid peer certificate: UnknownIssuer` from
+	@# uv's bundled rustls trust store; poetry uses pip, which honors PIP_CERT
+	@# / SSL_CERT_FILE from .env (Makefile.vars exports those when set).
+	cd $(SERVER_FASTAPI) && poetry config virtualenvs.in-project true --local
+	cd $(SERVER_FASTAPI) && poetry lock
+	cd $(SERVER_FASTAPI) && poetry install --no-root -vv
 
 .PHONY: dev-install
 dev-install: dev-preflight ## Install both dev stages in parallel (sub-make -j2)

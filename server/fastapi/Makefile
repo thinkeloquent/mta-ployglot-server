@@ -28,6 +28,25 @@ LOG_LEVEL   ?= info
 PID_FILE    := .quickstart.pid
 LOG_FILE    := .quickstart.log
 
+# Sibling source roots watched by uvicorn --reload-dir in `dev` (mirrors the
+# platform reference Makefile's --reload-dir packages_py / polyglot / common
+# pattern). Computed once so the `dev` recipe stays a single line of flags.
+ROOT_DIR    := $(abspath $(CURDIR)/../..)
+PLOYGLOTS   := $(ROOT_DIR)/ployglots
+RELOAD_DIRS := \
+  $(PLOYGLOTS)/mta-ployglot-server-bootstrap/fastapi_server \
+  $(PLOYGLOTS)/mta-ployglot-server-print-routes/packages/py \
+  $(PLOYGLOTS)/mta-ployglot-pkg-fetch-client/packages/py \
+  $(PLOYGLOTS)/mta-ployglot-pkg-env-resolve/packages/py \
+  $(PLOYGLOTS)/mta-ployglot-pkg-app-yaml-loader/packages/py \
+  $(PLOYGLOTS)/mta-ployglot-pkg-app-yaml-overwrite/packages/engine-py \
+  $(PLOYGLOTS)/mta-ployglot-pkg-app-yaml-overwrite/packages/applier-py \
+  $(PLOYGLOTS)/mta-ployglot-pkg-app-yaml-config/packages/py \
+  $(PLOYGLOTS)/mta-ployglot-pkg-app-yaml-fetch-config/packages/py
+
+DEV_LOG_DIR ?= $(ROOT_DIR)/.dev
+DEV_LOG     := $(DEV_LOG_DIR)/fastapi.log
+
 RUN_ENV := PORT=$(PORT) HOST=$(HOST) APP_ENV=$(APP_ENV) LOG_LEVEL=$(LOG_LEVEL) POLYGLOT_DEBUG=1
 
 .PHONY: help install reinstall up down start start-bg stop dev shell clean check-port check-poetry
@@ -85,11 +104,16 @@ start: check-poetry stop check-port ## Run in foreground via main.py (PORT=$(POR
 	@test -f $(ENTRY) || (echo "✖ $(ENTRY) not found"; exit 1)
 	$(RUN_ENV) $(POETRY) run $(PYTHON) $(ENTRY)
 
-dev: check-poetry stop check-port ## Run with uvicorn --reload (factory mode)
-	$(RUN_ENV) $(POETRY) run uvicorn $(APP_FACTORY) \
+dev: check-poetry stop check-port ## Run with uvicorn --reload (factory mode); watches in-tree sources + every ployglots/ sibling
+	@mkdir -p $(DEV_LOG_DIR)
+	@$(RUN_ENV) $(POETRY) run uvicorn $(APP_FACTORY) \
 		--factory --reload \
 		--host $(HOST) --port $(PORT) \
-		--log-level $(LOG_LEVEL)
+		--log-level $(LOG_LEVEL) \
+		--reload-dir . \
+		$(foreach d,$(RELOAD_DIRS),$(if $(wildcard $(d)),--reload-dir $(d))) \
+		--reload-include '*.py' \
+		2>&1 | tee $(DEV_LOG)
 
 shell: check-poetry ## Open a shell inside the poetry venv
 	$(POETRY) shell

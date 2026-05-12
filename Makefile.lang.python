@@ -15,14 +15,18 @@ PYTEST ?= $(PYTHON) -m pytest
 
 .PHONY: py.preinstall py.install py.ci-install py.lint py.test py.build py.clean py.ci
 
-py.preinstall: ## (python) pre-install hook — add `poetry config …` commands here
+py.preinstall: ## (python) pre-install hook — pins virtualenvs.in-project so DEV_VENV lands at $(SERVER_FASTAPI)/.venv
 	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi
-	@# Customize this recipe with `poetry config` commands needed before
-	@# `poetry install`. Examples:
-	@#   $(POETRY) config virtualenvs.in-project true
+	@# In-project venv keeps poetry, dev-install-fastapi, and the smoke targets
+	@# pointing at the same $(SERVER_FASTAPI)/.venv (= $(DEV_VENV)). Without this
+	@# pin poetry would create a venv under ~/Library/Caches and DEV_VENV would
+	@# not exist on disk, breaking dev-fastapi / py.dev / scripts/smoke/*.
+	$(POETRY) config virtualenvs.in-project true --local -C $(SERVER_FASTAPI)
+	@# Add registry / TLS-cert config below if your network needs it. Cert env
+	@# vars (PIP_CERT, SSL_CERT_FILE, REQUESTS_CA_BUNDLE) flow in via .env →
+	@# Makefile.vars exports → poetry → pip. Examples:
 	@#   $(POETRY) config repositories.private $(PYTHON_REGISTRY_URL)
 	@#   $(POETRY) config http-basic.private $$PYPI_USER $$PYPI_PASS
-	@:
 
 py.install: py.preinstall ## (python) lock + install server/fastapi via poetry (--no-root)
 	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi
