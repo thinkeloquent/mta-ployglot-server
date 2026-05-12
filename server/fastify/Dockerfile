@@ -2,7 +2,7 @@
 # server/fastify/Dockerfile
 #
 # Multi-stage build for the standalone mta-fastify-server. Builds
-# @thinkeloquent/fastify-server from the bootstrap submodule, then assembles
+# @ployglot/fastify-server from the bootstrap submodule, then assembles
 # /app from server/fastify/ (main.mjs + config/) with the built bootstrap
 # placed at /app/node_modules/fastify-server/ so `import "fastify-server"`
 # resolves.

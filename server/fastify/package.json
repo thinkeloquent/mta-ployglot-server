@@ -2,7 +2,7 @@
   "name": "mta-fastify-server",
   "version": "0.0.0",
   "private": true,
-  "description": "Standalone fastify server that extends @thinkeloquent/fastify-server from the mta-ployglot-server-bootstrap submodule.",
+  "description": "Standalone fastify server that extends @ployglot/fastify-server from the mta-ployglot-server-bootstrap submodule.",
   "type": "module",
   "scripts": {
     "start": "node main.mjs",

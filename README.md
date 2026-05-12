@@ -114,7 +114,7 @@ host ports, and you can start editing.
 │   └── orchestrator/Makefile       # 8-target package CI surface
 ├── ployglots/                      # symlinks → ../mta-ployglot-* siblings
 ├── server/
-│   ├── fastify/                    # Dockerfile for @thinkeloquent/fastify-server
+│   ├── fastify/                    # Dockerfile for @ployglot/fastify-server
 │   └── fastapi/                    # Dockerfile for thinkeloquent-fastapi-server
 ├── Makefile                        # composition root; includes Makefile.<area>
 ├── Makefile.vars                   # shared variables (SHELL := /bin/bash, ports, …)
