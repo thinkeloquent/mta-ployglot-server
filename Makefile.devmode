@@ -217,10 +217,102 @@ dev-fastapi: dev-install-fastapi ## Run fastapi on the host via .dev venv (foreg
 
 # ---------------------------------------------------------------------------
 # background runners
+#
+# Two per-language targets — `node.dev` and `py.dev` — each start a single
+# server in the background, write a PID file, and truncate their own logs.
+# They can be invoked individually (`make node.dev` / `make py.dev`) or
+# orchestrated together via `make dev`, which runs them in parallel through
+# a sub-make (`-j2`).
 # ---------------------------------------------------------------------------
 
+.PHONY: node.dev-stop
+node.dev-stop: ## (node) Stop background fastify + free port :$(FASTIFY_PORT) (idempotent)
+	@# Drop the PID file first if we wrote one; that's our canonical handle.
+	@pidfile=$(DEV_DIR)/fastify.pid; \
+	if [ -f $$pidfile ]; then \
+	  kill $$(cat $$pidfile) 2>/dev/null || true; \
+	  rm -f $$pidfile; \
+	fi
+	@# Then catch any node process still bound to FASTIFY_PORT — covers stale
+	@# runs whose PID file went missing. Only kill `*node*` commands so we
+	@# never SIGTERM Docker's port-proxy (would take down the daemon).
+	@for pid in $$(lsof -tiTCP:$(FASTIFY_PORT) -sTCP:LISTEN -nP 2>/dev/null); do \
+	  cmd=$$(ps -o comm= -p $$pid 2>/dev/null || echo ""); \
+	  case "$$cmd" in \
+	    *node*) kill $$pid 2>/dev/null || true ;; \
+	  esac; \
+	done
+	@# Belt-and-braces: any leftover `node ... main.mjs` from server/fastify
+	@# or .dev/fastify-app paths.
+	@pkill -f "node .*main\.mjs" 2>/dev/null || true
+	@# Wait up to 10s for the LISTEN binding to clear (TIME_WAIT etc.).
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+	  lsof -tiTCP:$(FASTIFY_PORT) -sTCP:LISTEN >/dev/null 2>&1 || break; \
+	  sleep 1; \
+	done
+
+.PHONY: py.dev-stop
+py.dev-stop: ## (python) Stop background fastapi + free port :$(FASTAPI_PORT) (idempotent)
+	@pidfile=$(DEV_DIR)/fastapi.pid; \
+	if [ -f $$pidfile ]; then \
+	  kill $$(cat $$pidfile) 2>/dev/null || true; \
+	  rm -f $$pidfile; \
+	fi
+	@for pid in $$(lsof -tiTCP:$(FASTAPI_PORT) -sTCP:LISTEN -nP 2>/dev/null); do \
+	  cmd=$$(ps -o comm= -p $$pid 2>/dev/null || echo ""); \
+	  case "$$cmd" in \
+	    *python*|*Python*) kill $$pid 2>/dev/null || true ;; \
+	  esac; \
+	done
+	@pkill -f "python.*main\.py" 2>/dev/null || true
+	@# Legacy submodule path — kept for siblings that haven't migrated.
+	@pkill -f "fastapi_server/examples/quickstart/main.py" 2>/dev/null || true
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+	  lsof -tiTCP:$(FASTAPI_PORT) -sTCP:LISTEN >/dev/null 2>&1 || break; \
+	  sleep 1; \
+	done
+
+.PHONY: node.dev
+node.dev: node.dev-stop dev-install-fastify ## (node) Start fastify in background on :$(FASTIFY_PORT) (host direct-run)
+	@# node.dev-stop already killed our own runners and waited for the port
+	@# to clear. If it's STILL bound, something we don't own (docker-proxy,
+	@# an unrelated server) is holding it — fail loudly with attribution.
+	@if lsof -tiTCP:$(FASTIFY_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+	  echo "==> port $(FASTIFY_PORT) still in use after node.dev-stop:"; \
+	  lsof -iTCP:$(FASTIFY_PORT) -sTCP:LISTEN -nP || true; \
+	  exit 1; fi
+	@mkdir -p $(DEV_DIR)
+	@: > $(DEV_DIR)/fastify.log
+	@: > $(DEV_DIR)/fastify.request.log
+	@: > $(DEV_DIR)/fastify.error.log
+	@echo "==> starting fastify (:$(FASTIFY_PORT))"
+	cd $(DEV_FASTIFY_APP) && LOG_DIR=$(DEV_DIR) PORT=$(FASTIFY_PORT) POLYGLOT_DEBUG=1 node main.mjs \
+	  > $(DEV_DIR)/fastify.log 2> $(DEV_DIR)/fastify.error.log & echo $$! > $(DEV_DIR)/fastify.pid
+	@echo "  fastify: http://127.0.0.1:$(FASTIFY_PORT)"
+	@echo "    setup:   $(DEV_DIR)/fastify.log"
+	@echo "    request: $(DEV_DIR)/fastify.request.log"
+	@echo "    error:   $(DEV_DIR)/fastify.error.log"
+
+.PHONY: py.dev
+py.dev: py.dev-stop dev-install-fastapi ## (python) Start fastapi in background on :$(FASTAPI_PORT) (host direct-run)
+	@if lsof -tiTCP:$(FASTAPI_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+	  echo "==> port $(FASTAPI_PORT) still in use after py.dev-stop:"; \
+	  lsof -iTCP:$(FASTAPI_PORT) -sTCP:LISTEN -nP || true; \
+	  exit 1; fi
+	@mkdir -p $(DEV_DIR)
+	@: > $(DEV_DIR)/fastapi.log
+	@: > $(DEV_DIR)/fastapi.request.log
+	@: > $(DEV_DIR)/fastapi.error.log
+	@echo "==> starting fastapi (:$(FASTAPI_PORT))"
+	cd $(SERVER_FASTAPI) && LOG_DIR=$(DEV_DIR) PORT=$(FASTAPI_PORT) POLYGLOT_DEBUG=1 PYTHONDONTWRITEBYTECODE=1 $(DEV_VENV)/bin/python main.py \
+	  > $(DEV_DIR)/fastapi.log 2> $(DEV_DIR)/fastapi.error.log & echo $$! > $(DEV_DIR)/fastapi.pid
+	@echo "  fastapi: http://127.0.0.1:$(FASTAPI_PORT)"
+	@echo "    setup:   $(DEV_DIR)/fastapi.log"
+	@echo "    request: $(DEV_DIR)/fastapi.request.log"
+	@echo "    error:   $(DEV_DIR)/fastapi.error.log"
+
 .PHONY: dev
-dev: dev-stop dev-install ## Start both servers in background (host direct-run)
+dev: dev-stop ## Start both servers in background — composes py.dev + node.dev (sub-make -j2)
 	@# dev-stop already cleared host-run node/python processes. If a docker
 	@# compose stack is still holding ports, bring it down so dev mode can
 	@# claim them. Skip silently if the docker daemon isn't running.
@@ -241,59 +333,18 @@ dev: dev-stop dev-install ## Start both servers in background (host direct-run)
 	    exit 1; \
 	  fi; \
 	done
-	@mkdir -p $(DEV_DIR)
-	@# Truncate per-stream files so each `make dev` run starts from empty logs.
-	@: > $(DEV_DIR)/fastify.log
-	@: > $(DEV_DIR)/fastify.request.log
-	@: > $(DEV_DIR)/fastify.error.log
-	@: > $(DEV_DIR)/fastapi.log
-	@: > $(DEV_DIR)/fastapi.request.log
-	@: > $(DEV_DIR)/fastapi.error.log
-	@echo "==> starting fastify (:$(FASTIFY_PORT))"
-	cd $(DEV_FASTIFY_APP) && LOG_DIR=$(DEV_DIR) PORT=$(FASTIFY_PORT) POLYGLOT_DEBUG=1 node main.mjs \
-	  > $(DEV_DIR)/fastify.log 2> $(DEV_DIR)/fastify.error.log & echo $$! > $(DEV_DIR)/fastify.pid
-	@echo "==> starting fastapi (:$(FASTAPI_PORT))"
-	cd $(SERVER_FASTAPI) && LOG_DIR=$(DEV_DIR) PORT=$(FASTAPI_PORT) POLYGLOT_DEBUG=1 PYTHONDONTWRITEBYTECODE=1 $(DEV_VENV)/bin/python main.py \
-	  > $(DEV_DIR)/fastapi.log 2> $(DEV_DIR)/fastapi.error.log & echo $$! > $(DEV_DIR)/fastapi.pid
-	@echo ""
-	@echo "  fastify: http://127.0.0.1:$(FASTIFY_PORT)"
-	@echo "    setup:   $(DEV_DIR)/fastify.log"
-	@echo "    request: $(DEV_DIR)/fastify.request.log"
-	@echo "    error:   $(DEV_DIR)/fastify.error.log"
-	@echo "  fastapi: http://127.0.0.1:$(FASTAPI_PORT)"
-	@echo "    setup:   $(DEV_DIR)/fastapi.log"
-	@echo "    request: $(DEV_DIR)/fastapi.request.log"
-	@echo "    error:   $(DEV_DIR)/fastapi.error.log"
+	@# Run py.dev and node.dev in parallel. Each pulls its own install via
+	@# its `dev-install-fastify` / `dev-install-fastapi` dependency, and the
+	@# two installs are independent so `-j2` is a strict wall-time win.
+	@# Output interleaves on the terminal — accepted trade-off.
+	@$(MAKE) -j2 py.dev node.dev
 	@echo ""
 	@echo "  tail all:     make dev-logs"
 	@echo "  healthcheck:  make healthz"
 	@echo "  stop:         make dev-stop"
 
 .PHONY: dev-stop
-dev-stop: ## Stop background dev servers (idempotent)
-	@for svc in fastify fastapi; do \
-	  pidfile=$(DEV_DIR)/$$svc.pid; \
-	  if [ -f $$pidfile ]; then \
-	    kill $$(cat $$pidfile) 2>/dev/null || true; \
-	    rm -f $$pidfile; \
-	  fi; \
-	done
-	@# Only kill processes whose command name matches a dev-mode runner.
-	@# `lsof -ti | xargs kill` indiscriminately would also kill Docker's
-	@# port-proxy process, which takes down the whole docker daemon.
-	@for port in $(FASTIFY_PORT) $(FASTAPI_PORT); do \
-	  for pid in $$(lsof -tiTCP:$$port -sTCP:LISTEN -nP 2>/dev/null); do \
-	    cmd=$$(ps -o comm= -p $$pid 2>/dev/null || echo ""); \
-	    case "$$cmd" in \
-	      *node*|*python*|*Python*) kill $$pid 2>/dev/null || true ;; \
-	    esac; \
-	  done; \
-	done
-	@# Match both the legacy submodule-examples paths and the new
-	@# server/fastify, server/fastapi, and .dev/fastify-app paths.
-	@pkill -f "node .*main\.mjs" 2>/dev/null || true
-	@pkill -f "python.*main\.py" 2>/dev/null || true
-	@pkill -f "fastapi_server/examples/quickstart/main.py" 2>/dev/null || true
+dev-stop: node.dev-stop py.dev-stop ## Stop background dev servers (idempotent) — composes node.dev-stop + py.dev-stop
 	@echo "==> dev servers stopped"
 
 .PHONY: dev-logs

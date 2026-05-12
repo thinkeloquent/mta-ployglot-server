@@ -48,21 +48,29 @@ node.ci-install: node.preinstall ## (node) deterministic CI install (pnpm instal
 	done
 
 node.lint: ## (node) per-package lint (graceful skip if no `lint` script)
+	@# `--if-present` MUST go before the script name. pnpm parses flags up to
+	@# the script name and then forwards everything after as script args, so
+	@# `pnpm run lint --if-present` invokes the missing script with the flag
+	@# as an arg (printing `ERR_PNPM_NO_SCRIPT`). `pnpm run --if-present lint`
+	@# is consumed by pnpm itself and silently skips when missing.
 	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
-	  (cd $(ROOT_DIR)/$$p && $(PNPM) run lint --if-present 2>/dev/null) || true; \
+	  if [ ! -f "$(ROOT_DIR)/$$p/package.json" ]; then continue; fi; \
+	  (cd $(ROOT_DIR)/$$p && $(PNPM) run --if-present lint 2>/dev/null) || true; \
 	done
 
 node.test: ## (node) per-package test (graceful skip if no `test` script)
 	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
-	  (cd $(ROOT_DIR)/$$p && $(PNPM) run test --if-present 2>/dev/null) || true; \
+	  if [ ! -f "$(ROOT_DIR)/$$p/package.json" ]; then continue; fi; \
+	  (cd $(ROOT_DIR)/$$p && $(PNPM) run --if-present test 2>/dev/null) || true; \
 	done
 
 node.build: ## (node) per-package build (graceful skip if no `build` script)
 	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
-	  (cd $(ROOT_DIR)/$$p && $(PNPM) run build --if-present 2>/dev/null) || true; \
+	  if [ ! -f "$(ROOT_DIR)/$$p/package.json" ]; then continue; fi; \
+	  (cd $(ROOT_DIR)/$$p && $(PNPM) run --if-present build 2>/dev/null) || true; \
 	done
 
 node.clean: ## (node) remove node_modules and dist from every Node sibling

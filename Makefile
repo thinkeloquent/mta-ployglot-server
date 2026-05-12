@@ -53,6 +53,11 @@ include Makefile.devmode
 -include Makefile.health
 -include Makefile.servers-ci
 
+# Workspace policy enforcement: workspace.sync consolidates the non-subtree
+# scripts that release.yml previously inlined (fix-pnpm-wrappers,
+# check-no-hardcoded-registry, check-python-pins, release-preflight.sh).
+-include Makefile.workspace
+
 # Dependency-state reset: clean-locks / clean-install-cache / clean-deps.
 -include Makefile.clean
 

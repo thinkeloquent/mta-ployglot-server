@@ -158,36 +158,30 @@ jobs:
             git commit -m "chore(release): strip .claude/ from root and each subtree"
           fi
 
-      - name: Check no hardcoded registry URLs in package configs
-        # Refuses any literal package-registry URL committed to the assembled
-        # tree (pyproject.toml [[tool.uv.index]], [tool.poetry.source]; uv.toml
-        # index-url / [[index]].url; .npmrc registry=; pip.conf / .pypirc).
-        # Registry URLs must flow at runtime from Makefile.vars / .env via
-        # NPM_REGISTRY and PYTHON_REGISTRY_URL → PIP_INDEX_URL / UV_INDEX_URL /
-        # UV_DEFAULT_INDEX. Allowlist: registry.npmjs.org, pypi.org,
-        # localhost:4873, 127.0.0.1.
-        run: ./.bin/check-no-hardcoded-registry.sh
-
-      - name: Check Python pin policy (SSOT = .bin/python-pins.toml)
-        # Validates every pyproject.toml / requirements.txt under ployglots/
-        # and server/ against the canonical pin list at .bin/python-pins.toml.
-        # Catches drift where one sibling declares fastapi>=0.115 while the
-        # SSOT says fastapi==0.128.0, missing extras (httpx[http2]), and
-        # requires-python mismatches. Counterpart of the agent-side
-        # `python-pin-pkg-version` skill — both read the same TOML.
-        run: ./.bin/check-python-pins.py
-
-      - name: Release preflight (license format, TOML parse, bootstrap re-emit)
-        # Last chance to bail before history flattens. The orphan-collapse
-        # step rewrites release/<X> to a parent-less single commit and
-        # force-pushes; failures detected after that point cost a full
-        # re-run. Gates (see scripts/workspace/release-preflight.sh):
-        #   1. No PEP 621 table-form `license = { ... }` (Poetry 2.x rejects).
-        #   2. Every ployglots/**/pyproject.toml parses as TOML.
-        #   3. `bootstrap.sh --re-emit-only` succeeds against the assembled
-        #      real-directory topology — the same code path a fresh clone of
-        #      release/<X> hits on `make bootstrap`.
-        run: ./scripts/workspace/release-preflight.sh
+      - name: Run workspace.sync (policy checks + auto-fixes)
+        # Consolidates every release-side gate that is NOT subtree / orphan-
+        # collapse plumbing. See Makefile.workspace — the same target a
+        # developer runs locally to reproduce CI gates before opening a PR.
+        # Bundled gates (in order):
+        #   1. fix-pnpm-build-forwarding.py --apply — wraps pnpm/npm wrapper
+        #      scripts in `sh -c '...'` so a caller's trailing `--if-present`
+        #      never reaches the inner `tsc`.
+        #   2. check-no-hardcoded-registry.sh — refuses literal registry URLs
+        #      (npmjs/pypi/Verdaccio allowlisted).
+        #   3. check-python-pins.py — validates every pyproject/requirements
+        #      against .bin/python-pins.toml (the agent-side SSOT).
+        #   4. release-preflight.sh — license format + TOML parse + bootstrap
+        #      re-emit against the assembled tree. Last gate before history
+        #      flattens; failures after orphan-collapse cost a full re-run.
+        # Mutations from gate (1) are committed in a single follow-up commit
+        # below; the other three gates are read-only.
+        run: |
+          set -euo pipefail
+          make workspace.sync
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "chore(release): apply workspace.sync auto-fixes"
+          fi
 
       - name: Collapse to a parent-less orphan commit
         # release/<X> is rebuilt from scratch every run with no shared

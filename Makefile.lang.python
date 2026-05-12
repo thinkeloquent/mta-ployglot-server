@@ -52,10 +52,25 @@ py.test: ## (python) pytest per sibling (graceful skip when no tests/ exists)
 	  fi; \
 	done
 
-py.build: ## (python) build wheel + sdist (poetry build)
+py.build: ## (python) build wheel + sdist (poetry build) — discovers inner ployglot pkg dirs (packages/*-py, packages/py, *_server)
 	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
 	for p in $(PY_PKGS); do \
-	  (cd $(ROOT_DIR)/$$p && $(POETRY) build); \
+	  found=0; \
+	  for pp in $$(find -L "$(ROOT_DIR)/$$p" -mindepth 1 -maxdepth 3 -name pyproject.toml \
+	      -not -path '*/node_modules/*' \
+	      -not -path '*/.venv/*' \
+	      -not -path '*/dist/*' \
+	      -not -path '*/build/*' \
+	      2>/dev/null | sort); do \
+	    if grep -qE '^[[:space:]]*package[[:space:]]*=[[:space:]]*false' "$$pp"; then continue; fi; \
+	    if ! grep -qE '^[[:space:]]*name[[:space:]]*=' "$$pp"; then continue; fi; \
+	    dir=$$(dirname "$$pp"); \
+	    rel=$${dir#$(ROOT_DIR)/}; \
+	    echo "build: $$rel"; \
+	    (cd "$$dir" && $(POETRY) build) || exit $$?; \
+	    found=1; \
+	  done; \
+	  if [ "$$found" = "0" ]; then echo "skip: $$p (no buildable python package found)"; fi; \
 	done
 
 py.clean: ## (python) remove venvs, build artifacts, caches

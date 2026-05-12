@@ -1,0 +1,58 @@
+# Makefile.workspace — workspace-level policy enforcement.
+#
+# `workspace.sync` is the single-entry consolidation of every check + auto-fix
+# that's NOT subtree / orphan-collapse plumbing. It runs in CI (release.yml)
+# as a single step before the orphan-collapse, and locally to keep a working
+# tree clean before opening a PR.
+#
+# Why one target: the four scripts below were previously four separate
+# release.yml steps interleaved with subtree work. Bundling them keeps the
+# workflow short (subtree concerns only) and lets a developer reproduce the
+# CI gates with one command. Each script is independently safe to re-run.
+#
+# The contract: workspace.sync mutates the working tree (fix-pnpm-build-
+# forwarding may rewrite sibling package.json files) but never makes a git
+# commit. The caller decides whether to commit (release.yml) or to inspect
+# (developer machine).
+
+# ---------------------------------------------------------------------------
+# workspace.sync — run every policy gate + auto-fix in sequence.
+# ---------------------------------------------------------------------------
+
+.PHONY: workspace.sync
+workspace.sync: workspace.sync.fix-pnpm-wrappers workspace.sync.check-registry workspace.sync.check-python-pins workspace.sync.release-preflight ## Run every workspace policy check + auto-fix (CI parity)
+	@echo "==> workspace.sync: ok"
+
+# ---------------------------------------------------------------------------
+# Per-script targets — invoke directly to run one gate in isolation.
+# Naming: workspace.sync.<short-name>. Each is .PHONY and independent.
+# ---------------------------------------------------------------------------
+
+.PHONY: workspace.sync.fix-pnpm-wrappers
+workspace.sync.fix-pnpm-wrappers: ## Auto-wrap pnpm/npm wrapper scripts in sh -c (absorbs trailing args)
+	@./.bin/fix-pnpm-build-forwarding.py --apply
+
+.PHONY: workspace.sync.check-registry
+workspace.sync.check-registry: ## Refuse hardcoded package-registry URLs in pyproject/uv/.npmrc/etc.
+	@./.bin/check-no-hardcoded-registry.sh
+
+.PHONY: workspace.sync.check-python-pins
+workspace.sync.check-python-pins: ## Validate every pyproject/requirements against .bin/python-pins.toml
+	@./.bin/check-python-pins.py
+
+.PHONY: workspace.sync.release-preflight
+workspace.sync.release-preflight: ## License format + TOML parse + bootstrap re-emit gates
+	@./scripts/workspace/release-preflight.sh
+
+# ---------------------------------------------------------------------------
+# workspace.sync.check — read-only variant. Refuses to mutate; exits non-zero
+# if any auto-fixer would have written. Used to gate PRs in a check-only CI.
+# ---------------------------------------------------------------------------
+
+.PHONY: workspace.sync.check
+workspace.sync.check: ## Read-only: same gates as workspace.sync but --check mode where supported
+	@./.bin/fix-pnpm-build-forwarding.py --check
+	@./.bin/check-no-hardcoded-registry.sh
+	@./.bin/check-python-pins.py
+	@./scripts/workspace/release-preflight.sh
+	@echo "==> workspace.sync.check: ok"
