@@ -1,76 +1,120 @@
-# Makefile.lang.node — Node toolchain wrappers (pnpm).
+# Makefile.lang.node — Node toolchain wrappers (pnpm + npm).
 #
-# Iterates `$(NODE_PKGS)` from Makefile.entries (registry-driven). On a
-# machine without pnpm, every target degrades to a `skip:` log line rather
-# than failing — this fragment is a no-op for environments without Node
-# tooling.
+# Iterates `$(NODE_PKGS)` from Makefile.entries (registry-driven). Each
+# sibling is installed with whichever package manager it ships with:
+#   - sibling carries its own `pnpm-workspace.yaml` → pnpm
+#   - otherwise (declares `workspaces` in package.json + ships
+#     package-lock.json, or is a single-package lib)            → npm
+#
+# Why not always pnpm? When `pnpm install` runs from inside a sibling that
+# has no `pnpm-workspace.yaml`, pnpm walks UP looking for a workspace root
+# and may attach to an unrelated parent (e.g. an orchestration root that
+# lists every sibling as an importer). That attachment hijacks the install
+# and silently produces zero installed packages — the failure surfaces
+# later at `node.build` as `Local package.json exists, but node_modules
+# missing`. Per-sibling pm detection avoids that hijack.
+#
+# On a machine without the chosen pm, the recipe degrades to a `skip:` log
+# line for that sibling rather than failing the whole pipeline — this
+# fragment stays a no-op for environments without Node tooling.
 #
 # `node.preinstall` is a customizable hook that runs before every install
-# target — drop `pnpm config …` commands in there to wire up registry
-# auth, store dirs, etc. Default body is a no-op.
+# target — drop `pnpm config …` / `npm config …` commands in there to wire
+# up registry auth, store dirs, etc. Default body is a no-op.
 #
 # Each recipe is a single shell invocation (multi-line via `\`) so that an
 # early-return `exit 0` from a guard actually returns from the recipe.
 
 PNPM ?= $(shell command -v pnpm 2>/dev/null)
+NPM  ?= $(shell command -v npm  2>/dev/null)
 
 .PHONY: node.preinstall node.install node.ci-install node.lint node.test node.build node.clean node.ci
 
-node.preinstall: ## (node) pre-install hook — add `pnpm config …` commands here
-	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi
-	@# Customize this recipe with `pnpm config` commands needed before
-	@# `pnpm install`. Examples:
+node.preinstall: ## (node) pre-install hook — add `pnpm config …` / `npm config …` commands here
+	@# Customize this recipe with package-manager config commands needed
+	@# before install. Examples:
 	@#   $(PNPM) config set registry https://registry.example.com/
-	@#   $(PNPM) config set cafile $$NODE_EXTRA_CA_CERTS
 	@#   $(PNPM) config set store-dir $(HOME)/.pnpm-store
-	@#   $(PNPM) config set //registry.example.com/:_authToken $$NPM_TOKEN
+	@#   $(NPM)  config set //registry.example.com/:_authToken $$NPM_TOKEN
 	@:
 
-node.install: node.preinstall ## (node) install deps for every Node sibling (pnpm install)
-	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
-	if [ -z "$(NODE_PKGS)" ]; then echo "skip: NODE_PKGS empty"; exit 0; fi; \
+node.install: node.preinstall ## (node) install deps per-sibling — pnpm if sibling has pnpm-workspace.yaml, else npm
+	@if [ -z "$(NODE_PKGS)" ]; then echo "skip: NODE_PKGS empty"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
-	  if [ ! -f "$(ROOT_DIR)/$$p/package.json" ]; then \
+	  d="$(ROOT_DIR)/$$p"; \
+	  if [ ! -f "$$d/package.json" ]; then \
 	    echo "==> $$p (skip: no top-level package.json)"; continue; \
 	  fi; \
-	  echo "==> $$p"; (cd $(ROOT_DIR)/$$p && $(PNPM) install); \
+	  if [ -f "$$d/pnpm-workspace.yaml" ]; then \
+	    if [ -z "$(PNPM)" ]; then echo "==> $$p (skip: pnpm sibling but no pnpm on PATH)"; continue; fi; \
+	    echo "==> $$p (pnpm)"; (cd "$$d" && $(PNPM) install) || exit $$?; \
+	  else \
+	    if [ -z "$(NPM)" ]; then echo "==> $$p (skip: npm sibling but no npm on PATH)"; continue; fi; \
+	    echo "==> $$p (npm)"; (cd "$$d" && $(NPM) install --no-audit --no-fund) || exit $$?; \
+	  fi; \
 	done
 
-node.ci-install: node.preinstall ## (node) deterministic CI install (pnpm install --frozen-lockfile)
-	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
-	if [ -z "$(NODE_PKGS)" ]; then echo "skip: NODE_PKGS empty"; exit 0; fi; \
+node.ci-install: node.preinstall ## (node) deterministic CI install (pnpm --frozen-lockfile / npm ci)
+	@if [ -z "$(NODE_PKGS)" ]; then echo "skip: NODE_PKGS empty"; exit 0; fi; \
 	for p in $(NODE_PKGS); do \
-	  if [ ! -f "$(ROOT_DIR)/$$p/package.json" ]; then \
+	  d="$(ROOT_DIR)/$$p"; \
+	  if [ ! -f "$$d/package.json" ]; then \
 	    echo "==> $$p (skip: no top-level package.json)"; continue; \
 	  fi; \
-	  echo "==> $$p"; \
-	  (cd $(ROOT_DIR)/$$p && $(PNPM) install --frozen-lockfile); \
+	  if [ -f "$$d/pnpm-workspace.yaml" ]; then \
+	    if [ -z "$(PNPM)" ]; then echo "==> $$p (skip: pnpm sibling but no pnpm on PATH)"; continue; fi; \
+	    echo "==> $$p (pnpm --frozen-lockfile)"; (cd "$$d" && $(PNPM) install --frozen-lockfile) || exit $$?; \
+	  else \
+	    if [ -z "$(NPM)" ]; then echo "==> $$p (skip: npm sibling but no npm on PATH)"; continue; fi; \
+	    if [ -f "$$d/package-lock.json" ]; then \
+	      echo "==> $$p (npm ci)"; (cd "$$d" && $(NPM) ci --no-audit --no-fund) || exit $$?; \
+	    else \
+	      echo "==> $$p (npm install)"; (cd "$$d" && $(NPM) install --no-audit --no-fund) || exit $$?; \
+	    fi; \
+	  fi; \
 	done
+
+# The lint/test/build recipes pick the same pm per-sibling as install. They
+# still graceful-skip when the named script is absent (so adding a sibling
+# without a `lint` script doesn't break the pipeline).
 
 node.lint: ## (node) per-package lint (graceful skip if no `lint` script)
-	@# `--if-present` MUST go before the script name. pnpm parses flags up to
-	@# the script name and then forwards everything after as script args, so
-	@# `pnpm run lint --if-present` invokes the missing script with the flag
-	@# as an arg (printing `ERR_PNPM_NO_SCRIPT`). `pnpm run --if-present lint`
-	@# is consumed by pnpm itself and silently skips when missing.
-	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
-	for p in $(NODE_PKGS); do \
-	  if [ ! -f "$(ROOT_DIR)/$$p/package.json" ]; then continue; fi; \
-	  (cd $(ROOT_DIR)/$$p && $(PNPM) run --if-present lint 2>/dev/null) || true; \
+	@# `--if-present` MUST go before the script name. Both pnpm and npm
+	@# parse flags up to the script name; `pnpm run lint --if-present` /
+	@# `npm run lint --if-present` invoke the missing script with the flag
+	@# as an arg (printing ERR_PNPM_NO_SCRIPT / Missing script). The
+	@# `pnpm run --if-present lint` / `npm run --if-present lint` forms
+	@# are consumed by the runner itself and silently skip when missing.
+	@for p in $(NODE_PKGS); do \
+	  d="$(ROOT_DIR)/$$p"; \
+	  if [ ! -f "$$d/package.json" ]; then continue; fi; \
+	  if [ -f "$$d/pnpm-workspace.yaml" ] && [ -n "$(PNPM)" ]; then \
+	    (cd "$$d" && $(PNPM) run --if-present lint 2>/dev/null) || true; \
+	  elif [ -n "$(NPM)" ]; then \
+	    (cd "$$d" && $(NPM) run --if-present lint 2>/dev/null) || true; \
+	  fi; \
 	done
 
 node.test: ## (node) per-package test (graceful skip if no `test` script)
-	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
-	for p in $(NODE_PKGS); do \
-	  if [ ! -f "$(ROOT_DIR)/$$p/package.json" ]; then continue; fi; \
-	  (cd $(ROOT_DIR)/$$p && $(PNPM) run --if-present test 2>/dev/null) || true; \
+	@for p in $(NODE_PKGS); do \
+	  d="$(ROOT_DIR)/$$p"; \
+	  if [ ! -f "$$d/package.json" ]; then continue; fi; \
+	  if [ -f "$$d/pnpm-workspace.yaml" ] && [ -n "$(PNPM)" ]; then \
+	    (cd "$$d" && $(PNPM) run --if-present test 2>/dev/null) || true; \
+	  elif [ -n "$(NPM)" ]; then \
+	    (cd "$$d" && $(NPM) run --if-present test 2>/dev/null) || true; \
+	  fi; \
 	done
 
 node.build: ## (node) per-package build (graceful skip if no `build` script)
-	@if [ -z "$(PNPM)" ]; then echo "skip: no pnpm on PATH"; exit 0; fi; \
-	for p in $(NODE_PKGS); do \
-	  if [ ! -f "$(ROOT_DIR)/$$p/package.json" ]; then continue; fi; \
-	  (cd $(ROOT_DIR)/$$p && $(PNPM) run --if-present build 2>/dev/null) || true; \
+	@for p in $(NODE_PKGS); do \
+	  d="$(ROOT_DIR)/$$p"; \
+	  if [ ! -f "$$d/package.json" ]; then continue; fi; \
+	  if [ -f "$$d/pnpm-workspace.yaml" ] && [ -n "$(PNPM)" ]; then \
+	    (cd "$$d" && $(PNPM) run --if-present build 2>/dev/null) || true; \
+	  elif [ -n "$(NPM)" ]; then \
+	    (cd "$$d" && $(NPM) run --if-present build 2>/dev/null) || true; \
+	  fi; \
 	done
 
 node.clean: ## (node) remove node_modules and dist from every Node sibling

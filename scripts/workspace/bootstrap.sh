@@ -275,8 +275,15 @@ emit_manifests() {
   # Each step is "<emitter-basename>|<KEY=VAL>" — KEY=VAL pins the output
   # path next to the registry. Empty KEY=VAL means the emitter handles its
   # own defaulting (e.g. emit-uv-editable.sh).
+  #
+  # Note: emit-pnpm.sh is intentionally absent. The orchestration root has no
+  # `package.json`, so a root-level `pnpm-workspace.yaml` has no install
+  # pivot — its only effect is that a `pnpm install` invoked from a sibling
+  # subdir walks up, finds the root workspace, treats it as the install
+  # root, and produces a no-op install (every importer reads as `{}`).
+  # Per-sibling installs are driven by Makefile.lang.node's node.install,
+  # which picks pnpm or npm based on each sibling's own lockfile shape.
   local steps=(
-    "emit-pnpm.sh|WORKSPACE_PNPM_OUT=$reg_dir/pnpm-workspace.yaml"
     "emit-go-work.sh|WORKSPACE_GO_WORK_OUT=$reg_dir/go.work"
     "emit-cargo.sh|WORKSPACE_CARGO_OUT=$reg_dir/Cargo.toml"
     "emit-make-vars.sh|WORKSPACE_MAKE_VARS_OUT=$reg_dir/Makefile.entries"

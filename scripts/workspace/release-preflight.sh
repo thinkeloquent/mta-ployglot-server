@@ -21,10 +21,16 @@
 #   3. Bootstrap re-emit
 #      Run `scripts/workspace/bootstrap.sh --re-emit-only` against the
 #      assembled tree. Validates that the emitter chain (Makefile.entries,
-#      pnpm-workspace.yaml, go.work, Cargo.toml, .dev/workspace.toml.lock.json,
+#      go.work, Cargo.toml, uv-editable manifests, .dev/workspace.toml.lock.json,
 #      docker-compose.yml) regenerates cleanly with ployglots/<name> as real
 #      directories — the topology that `make bootstrap` will see on a fresh
 #      release/<X> clone.
+#
+#      Note: pnpm-workspace.yaml is intentionally not part of the emitter
+#      chain — see scripts/workspace/bootstrap.sh::emit_manifests for the
+#      rationale. Per-sibling node deps are installed by Makefile.lang.node's
+#      node.install / node.ci-install, which selects pnpm or npm based on
+#      each sibling's own lockfile shape.
 #
 # Local usage:
 #   ./scripts/workspace/release-preflight.sh

@@ -34,7 +34,7 @@ print-env: ## Print tool versions (debug)
 #   bootstrap     auto-detect the branch and hydrate accordingly:
 #                   release/*  → siblings already squashed-in as subtrees;
 #                                run the emitter chain only (Makefile.entries,
-#                                pnpm-workspace.yaml, go.work, Cargo.toml,
+#                                go.work, Cargo.toml, uv-editable manifests,
 #                                .dev/workspace.toml.lock.json, docker-compose).
 #                   anything   → siblings hydrated via clone + symlink, then
 #                   else         emit. This is the default dev topology.
