@@ -220,5 +220,6 @@ distclean: clean ## Also remove built images (forces full rebuild next time)
 .PHONY: docker
 docker: dev-stop build up ## One-shot: build images then bring the stack up (docker-mode dev)
 
-.PHONY: docker-stop
-docker-stop: down ## Stop the docker-compose stack (alias for down)
+# Note: the former `docker-stop: down` alias was removed when Makefile.docker
+# was added — `docker-stop` there controls the Docker daemon itself. Use
+# `make down` to stop the compose stack.

@@ -22,6 +22,10 @@ include Makefile.vars
 include Makefile.compose
 include Makefile.devmode
 
+# Raw `docker` (not `docker compose`) lifecycle — per-runtime build / run /
+# cleanup / daemon controls; supports VAULT_MOUNT bind-mount + build-arg.
+-include Makefile.docker
+
 # Prod-mode runner (host-direct, parallel to devmode). Uses .prod/ staging,
 # copies (not symlinks) for siblings, NODE_ENV=production, no --watch.
 -include Makefile.prod
