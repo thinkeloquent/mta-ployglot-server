@@ -10,10 +10,17 @@
 # and the resulting image boots `python main.py` (uvicorn internal) on `$PORT`
 # (default 8080).
 #
-# Dependencies install **inside** server/fastapi/. No root-level pyproject.toml
-# is consulted. The 9 `path = "../../ployglots/<sibling>/..."` deps in
-# server/fastapi/pyproject.toml resolve against /application/ployglots/<sibling>/
-# which this Dockerfile COPY-supplies into the build context.
+# Dependencies install from the root pyproject.toml that is COPY'd from
+# .bin/docker/pyproject.toml in the build context to /application/ in the
+# image. That root manifest mirrors server/fastapi/pyproject.toml's editable
+# sibling closure — same 9 path-deps + uvicorn — with paths rewritten
+# `./ployglots/<sibling>/...` to be relative to /application/ (the WORKDIR).
+# The .bin/docker/ location (not repo root) prevents host-mode poetry from
+# treating mta-ployglot-server's root as a Python project. The .venv lands
+# at /application/.venv/ (instead of /application/server/fastapi/.venv/);
+# Poetry's editable .pth files contain absolute paths under
+# /application/ployglots/<sibling>/... which match the layout COPY'd into
+# the runtime stage so the .pth indirection keeps resolving.
 #
 # Python is pinned to **3.11** to satisfy
 # `python = ">=3.11,<3.12"` in server/fastapi/pyproject.toml (and the SSOT in
@@ -51,20 +58,21 @@ WORKDIR /application
 COPY ployglots/      ./ployglots/
 COPY server/fastapi/ ./server/fastapi/
 
-# Resolve all 9 editable path-deps + uvicorn from server/fastapi/pyproject.toml.
+# Root Poetry manifest. Mirrors server/fastapi/pyproject.toml's editable
+# closure with paths rewritten relative to /application/. See the file
+# header in .bin/docker/pyproject.toml for the drift-watch policy
+# (this file MUST stay in sync with server/fastapi/pyproject.toml).
+COPY .bin/docker/pyproject.toml ./pyproject.toml
+
+# Resolve all 9 editable path-deps + uvicorn from the root pyproject.toml.
 # `--no-root` skips installing the umbrella package itself (package-mode=false
 # anyway); `--only main` drops the dev group (watchfiles).
 #
-# Regenerate poetry.lock first: the host-generated lockfile records resolved
-# absolute paths through the host's `ployglots/<sibling>` symlinks (e.g.
-# `../../../mta-ployglot-pkg-app-yaml-config` — three levels up, above the
-# repo root). In the container those paths point at the filesystem root and
-# poetry errors "Path ... does not exist". `poetry lock --regenerate` rebuilds
-# the lockfile against pyproject.toml's `../../ployglots/<sibling>/...` paths
-# which match the container's layout.
-WORKDIR /application/server/fastapi
-RUN poetry lock --regenerate --no-interaction --no-ansi \
- && poetry install --no-interaction --no-ansi --no-root --only main
+# No host-generated poetry.lock is reused here — the root pyproject is
+# docker-only and has no checked-in lockfile, so poetry resolves fresh
+# against the `./ployglots/<sibling>/...` paths that match the container's
+# /application/ layout.
+RUN poetry install --no-interaction --no-ansi --no-root --only main
 
 # Smoke-check that every editable sibling is installed (one entry per sibling
 # in `pip list --editable`). Counts the 9 expected packages so a silent drop
@@ -93,7 +101,7 @@ RUN groupadd --system --gid 10001 app \
  && mkdir -p /application \
  && chown app:app /application
 
-ENV PATH="/application/server/fastapi/.venv/bin:${PATH}" \
+ENV PATH="/application/.venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \
@@ -108,13 +116,13 @@ WORKDIR /application
 
 # Keep the /application prefix identical to the builder stage so the .pth
 # files Poetry wrote (absolute paths under /application/ployglots/<sibling>/...)
-# still resolve.
-COPY --from=builder --chown=app:app /application/server/fastapi/.venv          ./server/fastapi/.venv
+# still resolve. The .venv now lives at /application/.venv/ (root, not under
+# server/fastapi/) because the install ran against the root pyproject.toml
+# COPY'd from .bin/docker/.
+COPY --from=builder --chown=app:app /application/.venv                         ./.venv
 COPY --from=builder --chown=app:app /application/server/fastapi/main.py        ./server/fastapi/main.py
 COPY --from=builder --chown=app:app /application/server/fastapi/config         ./server/fastapi/config
 COPY --from=builder --chown=app:app /application/server/fastapi/pyproject.toml ./server/fastapi/pyproject.toml
-COPY --from=builder --chown=app:app /application/server/fastapi/poetry.lock    ./server/fastapi/poetry.lock
-COPY --from=builder --chown=app:app /application/server/fastapi/poetry.toml    ./server/fastapi/poetry.toml
 COPY --from=builder --chown=app:app /application/ployglots                     ./ployglots
 
 USER app

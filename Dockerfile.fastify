@@ -9,13 +9,25 @@
 #     docker build -f Dockerfile.fastify -t mta-fastify:<tag> .
 # and the resulting image boots `node main.mjs` on `$PORT` (default 3000).
 #
-# Dependencies install **inside** server/fastify/. No root-level package.json /
-# pnpm-workspace.yaml is consulted. The 9 `file:` deps in
-# server/fastify/package.json resolve against /application/ployglots/<sibling>/ which
-# this Dockerfile COPY-supplies into the build context.
+# Package manager: **pnpm**. The reference platform Dockerfile uses pnpm and
+# we match it here. The host workflow still uses npm (per-server lockfiles are
+# package-lock.json); the Docker build re-resolves through pnpm against the
+# internal Verdaccio registry, so determinism comes from the pinned registry,
+# not from a lockfile transferred across toolchains. `--node-linker=hoisted`
+# keeps node_modules npm-flat so the runtime stage can `COPY` it as a normal
+# tree (pnpm's default symlink-to-store layout doesn't survive cross-stage
+# COPY cleanly).
+#
+# Workspace declaration files (package.json + pnpm-workspace.yaml + .npmrc)
+# are COPY'd from .bin/docker/ in the build context to /application/ in the
+# image. The 9 `file:` deps in server/fastify/package.json then resolve
+# against /application/ployglots/<sibling>/ which this Dockerfile
+# COPY-supplies into the build context. The .bin/docker/ location (not repo
+# root) prevents host-mode pnpm from finding the workspace via walk-up —
+# see Makefile.lang.node:7-15 for why that matters.
 #
 # Three TypeScript siblings need their dist/ generated BEFORE the top-level
-# `npm ci` runs, otherwise npm copies an empty source tree into node_modules:
+# install of fastify, otherwise pnpm copies an empty source tree into node_modules:
 #   - ployglots/mta-ployglot-server-bootstrap/fastify_server   (tsc)
 #   - ployglots/mta-ployglot-pkg-env-resolve/packages/ts       (tsc)
 #   - ployglots/mta-ployglot-pkg-fetch-client/packages/ts      (tsup)
@@ -26,19 +38,36 @@
 # singular form).
 
 ARG NODE_IMAGE=node:22-slim
+# pnpm 10+ requires explicit approval of dependency build scripts and exits 1
+# on any ignored build (ERR_PNPM_IGNORED_BUILDS) — incompatible with a
+# non-interactive Docker build that has transitive deps like esbuild with
+# postinstall steps. Pinning to 9.x keeps the permissive defaults the
+# reference Dockerfile relied on.
+ARG PNPM_VERSION=9
 
 # -----------------------------------------------------------------------------
-# Stage 1: builder — install + build siblings + install fastify
+# Stage 1: builder — install pnpm, build siblings, install fastify
 # -----------------------------------------------------------------------------
 FROM ${NODE_IMAGE} AS builder
 
 # NPM registry — SSOT lives in Makefile.vars (NPM_REGISTRY ?= http://localhost:4873).
-# The Make-driven path (`make docker-build.fastify`) passes this through as
-# `--build-arg NPM_REGISTRY=...`. The default below mirrors Makefile.vars and is
-# only consulted when this Dockerfile is built RAW (direct `docker build ...`
-# outside the Makefile). The lockfiles' integrity hashes (sha512) are
-# registry-independent, so the sed-rewrite is a no-op when both sides agree.
+# Both `npm install -g pnpm` and pnpm itself read NPM_CONFIG_REGISTRY, so we
+# export it as an ENV in this stage. Repo policy: never use a public registry
+# to bypass the internal mirror — make the container reach the host's
+# Verdaccio (Makefile.docker passes `--network=host`).
 ARG NPM_REGISTRY=http://localhost:4873
+ARG PNPM_VERSION
+ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
+
+# Install pnpm globally. (Using `npm install -g` rather than corepack to keep
+# the registry pinning consistent — corepack pulls from registry.npmjs.org by
+# default and would need separate config.)
+RUN npm install -g pnpm@${PNPM_VERSION}
+
+# `--node-linker=hoisted`: produce a flat npm-style node_modules tree instead
+# of pnpm's symlink-to-content-store default, so the runtime stage's
+# `COPY ... node_modules` brings everything across without dangling links.
+ENV NPM_CONFIG_NODE_LINKER=hoisted
 
 WORKDIR /application
 
@@ -49,50 +78,42 @@ WORKDIR /application
 COPY ployglots/      ./ployglots/
 COPY server/fastify/ ./server/fastify/
 
-# Rewrite registry across EVERY package-lock.json under server/fastify/ and
-# ployglots/<sibling>/ (siblings may keep their lockfile at the repo root rather
-# than inside the per-language subpackage dir). Also set npm's runtime config
-# so any registry-aware step (resolving missing peers, etc.) honors the same
-# value — covers cases where a sibling has no lockfile.
-RUN find server/fastify ployglots -name 'package-lock.json' \
-        -not -path '*/node_modules/*' \
-        -exec sed -i "s|http://localhost:4873|${NPM_REGISTRY}|g" {} + \
- && npm config set registry "${NPM_REGISTRY}"
-ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
+# pnpm workspace declaration. The orchestration shape is committed under
+# .bin/docker/ (package.json + pnpm-workspace.yaml + .npmrc) so this
+# Dockerfile is a `COPY` consumer rather than the source of truth for the
+# member-package list. Placing those files in .bin/docker/ — not at the
+# repo root — keeps host-mode pnpm's directory walk-up from finding them
+# and hijacking Makefile.lang.node's per-sibling install strategy
+# (see the warning at Makefile.lang.node:7-15).
+#
+# Why pnpm needs a workspace declaration at all:
+#   fastify's per-server package.json uses npm-style `file:../../ployglots/...`
+#   deps. npm hoists those so transitive references (e.g.
+#   @ployglot/app-yaml-from-context's own `@ployglot/runtime-template-resolver`
+#   dep) resolve to the local copy without a registry lookup. pnpm doesn't
+#   do that implicit hoisting — it would 404 against the internal registry.
+#   Declaring all siblings + server/fastify as workspace packages, with
+#   pnpm's default `link-workspace-packages: true`, makes intra-workspace
+#   deps resolve locally by NAME regardless of whether they're declared
+#   `file:` or as a SemVer range.
+COPY .bin/docker/package.json        ./package.json
+COPY .bin/docker/pnpm-workspace.yaml ./pnpm-workspace.yaml
+COPY .bin/docker/.npmrc              ./.npmrc
 
-# 1) Build the bootstrap (TypeScript → dist/) with its lockfile.
-WORKDIR /application/ployglots/mta-ployglot-server-bootstrap/fastify_server
-RUN npm ci --no-audit --no-fund \
- && npm run build \
- && npm prune --omit=dev
+# 1) Install all workspace deps. pnpm walks every package's deps and resolves
+#    by-name within the workspace before consulting the registry.
+RUN pnpm install --recursive
 
-# 2) Build env-resolve from its workspace root. The sibling is a monorepo
-#    with `"workspaces": ["packages/ts"]`, lockfile at the sibling root, and
-#    `npm run build --workspaces --if-present` delegates to the ts subpackage.
-WORKDIR /application/ployglots/mta-ployglot-pkg-env-resolve
-RUN npm ci --no-audit --no-fund \
- && npm run build --workspaces --if-present \
- && npm prune --omit=dev
+# 2) Build the 3 TypeScript siblings so dist/ exists before fastify's runtime
+#    needs to import them. The .mjs siblings need no build step.
+RUN pnpm --filter @ployglot/fastify-server      run build \
+ && pnpm --filter @org/env-resolve              run build \
+ && pnpm --filter @polyglot/fetch-http-client   run build
 
-# 3) Build fetch-client from its workspace root. tsup uses rollup, whose
-#    platform-specific native dep (@rollup/rollup-linux-arm64-gnu etc.) hits
-#    npm bug #4828: the dep is listed as optional and gets dropped on cross-
-#    platform installs. The lockfile was generated on darwin, but the
-#    container is linux. npm's official workaround (in the error message
-#    itself): delete the lockfile + node_modules and re-install so the dep
-#    tree is recomputed against the runtime platform.
-WORKDIR /application/ployglots/mta-ployglot-pkg-fetch-client
-RUN rm -rf node_modules package-lock.json packages/ts/node_modules packages/ts/package-lock.json \
- && npm install --no-audit --no-fund --include=optional \
- && npm run build \
- && npm prune --omit=dev
-
-# 4) Install fastify against the per-server lockfile. npm follows every
-#    file:../../ployglots/<sibling>/... edge and copies the (now built) source
-#    tree of each sibling into node_modules/. All 9 deps resolve in one step.
-WORKDIR /application/server/fastify
-RUN npm ci --no-audit --no-fund \
- && npm prune --omit=dev
+# 3) Drop devDependencies. pnpm doesn't support `--recursive` on `prune`, so
+#    re-install with `--prod` filtered to fastify + its workspace dependency
+#    closure. This keeps only the runtime-needed packages in each tree.
+RUN pnpm install --prod --filter 'mta-fastify-server...'
 
 # -----------------------------------------------------------------------------
 # Stage 2: runtime — minimal, non-root

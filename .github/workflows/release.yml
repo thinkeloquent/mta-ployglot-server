@@ -183,6 +183,29 @@ jobs:
             git commit -m "chore(release): apply workspace.sync auto-fixes"
           fi
 
+      - name: Regenerate .bin/docker/* from per-server manifests
+        # The four files under .bin/docker/ — pnpm-workspace.yaml, package.json,
+        # .npmrc, pyproject.toml — are the manifests Dockerfile.fastify and
+        # Dockerfile.fastapi COPY into /application/ during the cloud build.
+        # Their content is derived from server/fastify/package.json and
+        # server/fastapi/pyproject.toml (the editable SSOTs).
+        #
+        # A contributor who adds or removes a sibling dep on main could forget
+        # to keep .bin/docker/* in sync. To prevent a stale committed copy
+        # from breaking the release Docker build, regenerate the four files
+        # here and commit any diff before orphan-collapse. The step is a
+        # no-op when main is already up-to-date; self-healing when it isn't.
+        #
+        # Runs after workspace.sync so any auto-fix that mutates a per-server
+        # manifest (gate #1) is already on disk and feeds into the regen.
+        run: |
+          set -euo pipefail
+          python .bin/docker/regenerate.py --apply
+          if ! git diff --quiet -- .bin/docker/; then
+            git add .bin/docker/
+            git commit -m "chore(release): regenerate .bin/docker/* from per-server manifests"
+          fi
+
       - name: Collapse to a parent-less orphan commit
         # release/<X> is rebuilt from scratch every run with no shared
         # history. Take the assembled working tree, wrap it as a parent-less
