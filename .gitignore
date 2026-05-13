@@ -46,3 +46,7 @@ ployglots/mta-ployglot-server-bootstrap
 
 # Rendered tenant manifests (Makefile.tenants -> tenant-render)
 /dist/
+
+# Docker staged build context (Makefile.docker -> docker-stage). Materializes
+# ployglots/ symlinks into a real-dir context for `docker build` on dev branches.
+/.docker-stage/

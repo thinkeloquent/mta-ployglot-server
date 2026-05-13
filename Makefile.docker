@@ -63,9 +63,31 @@ FASTAPI_CONTAINER        ?= mta-fastapi-svc
 FASTIFY_DOCKERFILE       ?= Dockerfile.fastify
 FASTAPI_DOCKERFILE       ?= Dockerfile.fastapi
 
-# Build context — repo root so `COPY ployglots/...` and `COPY server/...`
-# both resolve regardless of which Dockerfile is selected.
+# Build context — branch-aware.
+#
+# The canonical cloud-build branch is `release/main`, where every entry under
+# ployglots/<sibling>/ is a real squashed-subtree directory. There the build
+# context is the repo root and `COPY ployglots/...` resolves naturally.
+#
+# On `main` (and any other branch where workspace.toml is hydrated via
+# symlinks under ployglots/<sibling>/ → ../../<sibling>), Docker's COPY cannot
+# follow symlinks that escape the build context, so each sibling lands as a
+# broken/empty entry and the install step fails. We detect that mode at
+# parse time and materialize a staged context under .docker-stage/ via
+# `rsync -aL` (dereference symlinks). The Dockerfile and build flow stay
+# unchanged — only the context root flips.
+#
+# Detection probe: is ployglots/mta-ployglot-server-bootstrap a symlink?
+DOCKER_PLOYGLOTS_ARE_SYMLINKS := $(shell test -L $(ROOT_DIR)/ployglots/mta-ployglot-server-bootstrap 2>/dev/null && echo 1 || echo 0)
+DOCKER_STAGE_DIR              ?= $(ROOT_DIR)/.docker-stage
+
+ifeq ($(DOCKER_PLOYGLOTS_ARE_SYMLINKS),1)
+DOCKER_BUILD_CONTEXT     ?= $(DOCKER_STAGE_DIR)
+DOCKER_STAGE_PREREQ       = docker-stage
+else
 DOCKER_BUILD_CONTEXT     ?= $(ROOT_DIR)
+DOCKER_STAGE_PREREQ       =
+endif
 
 # Host:container port mapping. Container-internal ports are fixed by the
 # Dockerfiles (fastify=3000, fastapi=8080). Host ports default to the same
@@ -121,9 +143,26 @@ DOCKER_VAULT_BUILD_FLAGS  = $(if $(strip $(VAULT_MOUNT)),--build-arg VAULT_SECRE
 # no LOG_DIR variable at all (avoids accidentally pointing at host paths).
 DOCKER_LOG_RUN_FLAGS      = $(if $(strip $(DOCKER_LOG_DIR)),-e LOG_DIR=$(DOCKER_LOG_DIR),-e LOG_CONSOLE=$(DOCKER_LOG_CONSOLE))
 
+# Network mode for `docker build`. The default `--network=host` makes the
+# build container share the host's network namespace so it can reach the
+# internal Verdaccio mirror at `http://localhost:4873` (NPM_REGISTRY SSOT in
+# Makefile.vars) and any other host-local index. Public-registry overrides
+# (e.g. `NPM_REGISTRY=https://registry.npmjs.org`) are NOT supported by repo
+# policy — never bypass the internal registry to "fix" a build error.
+#
+# macOS Docker Desktop note: requires "Enable host networking" in Settings →
+# Resources → Network. Without it, `--network=host` is silently ignored on
+# Mac and localhost from the container points at the container itself.
+#
+# Override only when the build target genuinely runs offline / in a sandbox
+# that forbids host network access (e.g. CI in a hermetic builder), e.g.:
+#   make docker-build.fastify DOCKER_BUILD_NETWORK=
+DOCKER_BUILD_NETWORK     ?= host
+
 # Common build flags applied to every `docker build` invocation. Pulls in
 # the NPM_REGISTRY SSOT (Makefile.vars) the same way compose builds do.
-DOCKER_BUILD_FLAGS        = --build-arg NPM_REGISTRY=$(NPM_REGISTRY) \
+DOCKER_BUILD_FLAGS        = $(if $(strip $(DOCKER_BUILD_NETWORK)),--network=$(DOCKER_BUILD_NETWORK),) \
+                            --build-arg NPM_REGISTRY=$(NPM_REGISTRY) \
                             --build-arg BUILD_ID=$(BUILD_ID) \
                             --build-arg BUILD_VERSION=$(BUILD_VERSION) \
                             $(DOCKER_VAULT_BUILD_FLAGS)
@@ -157,11 +196,50 @@ docker-verify-install: ## Verify the docker CLI is installed and the daemon is r
 	echo "OK: docker installed and daemon reachable"
 
 # ---------------------------------------------------------------------------
+# stage — materialize ployglots/ symlinks into a real-dir staging context
+# ---------------------------------------------------------------------------
+#
+# On branches where ployglots/<sibling>/ are symlinks (main / dev), Docker
+# rejects the COPY because the target lives outside the build context. We
+# rsync -aL the tree into .docker-stage/ so the build sees real dirs.
+# On release/* branches (real subtree dirs) the recipe is a no-op.
+#
+# Excludes mirror .dockerignore so we don't drag host build artifacts in.
+
+.PHONY: docker-stage
+docker-stage: ## Stage build context at $(DOCKER_STAGE_DIR), deref'ing ployglots/ symlinks (no-op on release/*)
+ifeq ($(DOCKER_PLOYGLOTS_ARE_SYMLINKS),1)
+	@set -euo pipefail; \
+	echo "==> ployglots/ are symlinks (current branch: $$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?'))"; \
+	echo "==> staging deref'd build context at $(DOCKER_STAGE_DIR)"; \
+	mkdir -p $(DOCKER_STAGE_DIR); \
+	rsync -aL --delete \
+	  --exclude='node_modules' --exclude='.venv' --exclude='__pycache__' \
+	  --exclude='*.egg-info'    --exclude='.pytest_cache' --exclude='dist' \
+	  --exclude='.git'          --exclude='.dev'    --exclude='.prod' \
+	  --exclude='.turbo'        --exclude='.cache'  --exclude='*.log' \
+	  $(ROOT_DIR)/ployglots/ $(DOCKER_STAGE_DIR)/ployglots/ ; \
+	rsync -a --delete \
+	  --exclude='node_modules' --exclude='.venv' --exclude='__pycache__' \
+	  --exclude='*.egg-info'    --exclude='.pytest_cache' \
+	  $(ROOT_DIR)/server/ $(DOCKER_STAGE_DIR)/server/ ; \
+	cp $(ROOT_DIR)/Dockerfile.fastify $(ROOT_DIR)/Dockerfile.fastapi $(DOCKER_STAGE_DIR)/ ; \
+	if [ -f $(ROOT_DIR)/.dockerignore ]; then cp $(ROOT_DIR)/.dockerignore $(DOCKER_STAGE_DIR)/ ; fi; \
+	echo "==> staged: $$(du -sh $(DOCKER_STAGE_DIR) | cut -f1) at $(DOCKER_STAGE_DIR)"
+else
+	@echo "==> ployglots/ are real dirs (release/* branch); skipping stage"
+endif
+
+.PHONY: docker-stage-clean
+docker-stage-clean: ## Remove $(DOCKER_STAGE_DIR)
+	@rm -rf $(DOCKER_STAGE_DIR) && echo "==> removed $(DOCKER_STAGE_DIR)"
+
+# ---------------------------------------------------------------------------
 # build — per-runtime + aggregate; rebuild variants force --no-cache --pull
 # ---------------------------------------------------------------------------
 
 .PHONY: docker-build.fastify
-docker-build.fastify: ## Build the fastify image (uses cache; respects VAULT_MOUNT)
+docker-build.fastify: $(DOCKER_STAGE_PREREQ) ## Build the fastify image (uses cache; respects VAULT_MOUNT)
 	docker build $(DOCKER_BUILD_FLAGS) \
 	  -t $(FASTIFY_IMAGE) \
 	  -f $(FASTIFY_DOCKERFILE) \
@@ -172,7 +250,7 @@ docker-build.fastify: ## Build the fastify image (uses cache; respects VAULT_MOU
 docker-build.fastiy: docker-build.fastify ## (typo alias) → docker-build.fastify
 
 .PHONY: docker-build.fastapi
-docker-build.fastapi: ## Build the fastapi image (uses cache; respects VAULT_MOUNT)
+docker-build.fastapi: $(DOCKER_STAGE_PREREQ) ## Build the fastapi image (uses cache; respects VAULT_MOUNT)
 	docker build $(DOCKER_BUILD_FLAGS) \
 	  -t $(FASTAPI_IMAGE) \
 	  -f $(FASTAPI_DOCKERFILE) \
@@ -182,7 +260,7 @@ docker-build.fastapi: ## Build the fastapi image (uses cache; respects VAULT_MOU
 docker-build.servers: docker-build.fastify docker-build.fastapi ## Build both server images
 
 .PHONY: docker-rebuild.fastify
-docker-rebuild.fastify: ## Rebuild fastify from scratch (rm image, --no-cache, --pull)
+docker-rebuild.fastify: $(DOCKER_STAGE_PREREQ) ## Rebuild fastify from scratch (rm image, --no-cache, --pull)
 	-docker image rm $(FASTIFY_IMAGE) 2>/dev/null || true
 	docker build --no-cache --pull $(DOCKER_BUILD_FLAGS) \
 	  -t $(FASTIFY_IMAGE) \
@@ -193,7 +271,7 @@ docker-rebuild.fastify: ## Rebuild fastify from scratch (rm image, --no-cache, -
 docker-rebuild.fastiy: docker-rebuild.fastify ## (typo alias) → docker-rebuild.fastify
 
 .PHONY: docker-rebuild.fastapi
-docker-rebuild.fastapi: ## Rebuild fastapi from scratch (rm image, --no-cache, --pull)
+docker-rebuild.fastapi: $(DOCKER_STAGE_PREREQ) ## Rebuild fastapi from scratch (rm image, --no-cache, --pull)
 	-docker image rm $(FASTAPI_IMAGE) 2>/dev/null || true
 	docker build --no-cache --pull $(DOCKER_BUILD_FLAGS) \
 	  -t $(FASTAPI_IMAGE) \

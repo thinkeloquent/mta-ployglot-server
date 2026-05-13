@@ -49,11 +49,16 @@ WORKDIR /application
 COPY ployglots/      ./ployglots/
 COPY server/fastify/ ./server/fastify/
 
-# Rewrite registry across every lockfile we'll exercise (bootstrap + fastify).
-# Other TS siblings have no lockfile.
-RUN sed -i "s|http://localhost:4873|${NPM_REGISTRY}|g" \
-        server/fastify/package-lock.json \
-        ployglots/mta-ployglot-server-bootstrap/fastify_server/package-lock.json
+# Rewrite registry across EVERY package-lock.json under server/fastify/ and
+# ployglots/<sibling>/ (siblings may keep their lockfile at the repo root rather
+# than inside the per-language subpackage dir). Also set npm's runtime config
+# so any registry-aware step (resolving missing peers, etc.) honors the same
+# value — covers cases where a sibling has no lockfile.
+RUN find server/fastify ployglots -name 'package-lock.json' \
+        -not -path '*/node_modules/*' \
+        -exec sed -i "s|http://localhost:4873|${NPM_REGISTRY}|g" {} + \
+ && npm config set registry "${NPM_REGISTRY}"
+ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
 
 # 1) Build the bootstrap (TypeScript → dist/) with its lockfile.
 WORKDIR /application/ployglots/mta-ployglot-server-bootstrap/fastify_server
@@ -61,15 +66,24 @@ RUN npm ci --no-audit --no-fund \
  && npm run build \
  && npm prune --omit=dev
 
-# 2) Build env-resolve (TypeScript → dist/). No lockfile, so npm install.
-WORKDIR /application/ployglots/mta-ployglot-pkg-env-resolve/packages/ts
-RUN npm install --no-audit --no-fund \
- && npm run build \
+# 2) Build env-resolve from its workspace root. The sibling is a monorepo
+#    with `"workspaces": ["packages/ts"]`, lockfile at the sibling root, and
+#    `npm run build --workspaces --if-present` delegates to the ts subpackage.
+WORKDIR /application/ployglots/mta-ployglot-pkg-env-resolve
+RUN npm ci --no-audit --no-fund \
+ && npm run build --workspaces --if-present \
  && npm prune --omit=dev
 
-# 3) Build fetch-client (tsup → dist/). No lockfile.
-WORKDIR /application/ployglots/mta-ployglot-pkg-fetch-client/packages/ts
-RUN npm install --no-audit --no-fund \
+# 3) Build fetch-client from its workspace root. tsup uses rollup, whose
+#    platform-specific native dep (@rollup/rollup-linux-arm64-gnu etc.) hits
+#    npm bug #4828: the dep is listed as optional and gets dropped on cross-
+#    platform installs. The lockfile was generated on darwin, but the
+#    container is linux. npm's official workaround (in the error message
+#    itself): delete the lockfile + node_modules and re-install so the dep
+#    tree is recomputed against the runtime platform.
+WORKDIR /application/ployglots/mta-ployglot-pkg-fetch-client
+RUN rm -rf node_modules package-lock.json packages/ts/node_modules packages/ts/package-lock.json \
+ && npm install --no-audit --no-fund --include=optional \
  && npm run build \
  && npm prune --omit=dev
 

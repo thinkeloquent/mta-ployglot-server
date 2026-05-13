@@ -54,13 +54,26 @@ COPY server/fastapi/ ./server/fastapi/
 # Resolve all 9 editable path-deps + uvicorn from server/fastapi/pyproject.toml.
 # `--no-root` skips installing the umbrella package itself (package-mode=false
 # anyway); `--only main` drops the dev group (watchfiles).
+#
+# Regenerate poetry.lock first: the host-generated lockfile records resolved
+# absolute paths through the host's `ployglots/<sibling>` symlinks (e.g.
+# `../../../mta-ployglot-pkg-app-yaml-config` — three levels up, above the
+# repo root). In the container those paths point at the filesystem root and
+# poetry errors "Path ... does not exist". `poetry lock --regenerate` rebuilds
+# the lockfile against pyproject.toml's `../../ployglots/<sibling>/...` paths
+# which match the container's layout.
 WORKDIR /application/server/fastapi
-RUN poetry install --no-interaction --no-ansi --no-root --only main
+RUN poetry lock --regenerate --no-interaction --no-ansi \
+ && poetry install --no-interaction --no-ansi --no-root --only main
 
-# Smoke-check that every editable sibling actually imports.
-RUN .venv/bin/python -c "import importlib; \
-mods=['fastapi_server','env_resolve','app_yaml_loader','app_yaml_config','app_yaml_fetch_config','runtime_template_resolver','app_yaml_from_context','polyglot_fetch_http_client','print_routes_fastapi']; \
-[importlib.import_module(m) for m in mods]; print('imports OK:', mods)"
+# Smoke-check that every editable sibling is installed (one entry per sibling
+# in `pip list --editable`). Counts the 9 expected packages so a silent drop
+# fails the build.
+RUN .venv/bin/pip list --editable 2>/dev/null \
+ | tail -n +3 \
+ | tee /dev/stderr \
+ | (count=$(wc -l) ; [ "$count" -eq 9 ] || { echo "FAIL: expected 9 editable siblings, got $count"; exit 1; }) \
+ && echo "OK: 9 editable siblings installed"
 
 # -----------------------------------------------------------------------------
 # Stage 2: runtime — minimal, non-root, same /application prefix as builder
