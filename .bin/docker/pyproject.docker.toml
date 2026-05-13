@@ -1,4 +1,15 @@
-# pyproject.toml — Docker-only Poetry manifest for Dockerfile.fastapi.
+# pyproject.docker.toml — Docker-only Poetry manifest for Dockerfile.fastapi.
+#
+# Why the unusual filename (not the conventional `pyproject.toml`):
+#   GitHub's Dependency Graph submission auto-discovers any file named
+#   exactly `pyproject.toml` and tries to resolve its dependencies against
+#   the manifest's directory. The 9 `path = "./ployglots/<sibling>/..."`
+#   entries below only resolve from /application/ inside the container,
+#   where Dockerfile.fastapi COPYs this file. From the host's .bin/docker/
+#   directory, those paths point nowhere — so Dependency Graph runs fail
+#   with `path_dependencies_not_reachable`. Renaming to
+#   pyproject.docker.toml dodges the exact-name auto-discovery; the
+#   Dockerfile renames it back to pyproject.toml during COPY.
 #
 # Mirrors server/fastapi/pyproject.toml so the Dockerfile can resolve
 # every editable sibling from a single root file at

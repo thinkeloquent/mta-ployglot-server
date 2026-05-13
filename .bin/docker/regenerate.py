@@ -7,7 +7,10 @@ sources of truth:
   - server/fastify/package.json     ->  .bin/docker/pnpm-workspace.yaml
                                         .bin/docker/package.json   (static)
                                         .bin/docker/.npmrc          (static)
-  - server/fastapi/pyproject.toml   ->  .bin/docker/pyproject.toml
+  - server/fastapi/pyproject.toml   ->  .bin/docker/pyproject.docker.toml
+                                        (renamed off `pyproject.toml` to
+                                        dodge Dependency Graph auto-scan;
+                                        see the header inside that file)
 
 Used by .github/workflows/release.yml to guarantee that release/<X> always
 carries docker manifests that match the per-server manifests bit-for-bit,
@@ -40,7 +43,7 @@ OUT_DIR = ROOT / ".bin" / "docker"
 OUT_PNPM_WS = OUT_DIR / "pnpm-workspace.yaml"
 OUT_PKG_JSON = OUT_DIR / "package.json"
 OUT_NPMRC = OUT_DIR / ".npmrc"
-OUT_PYPROJECT = OUT_DIR / "pyproject.toml"
+OUT_PYPROJECT = OUT_DIR / "pyproject.docker.toml"
 
 # --- File headers (comment blocks emitted at the top of each output file) ---
 
@@ -79,7 +82,18 @@ _HEADER_NPMRC = """\
 """
 
 _HEADER_PYPROJECT = """\
-# pyproject.toml — Docker-only Poetry manifest for Dockerfile.fastapi.
+# pyproject.docker.toml — Docker-only Poetry manifest for Dockerfile.fastapi.
+#
+# Why the unusual filename (not the conventional `pyproject.toml`):
+#   GitHub's Dependency Graph submission auto-discovers any file named
+#   exactly `pyproject.toml` and tries to resolve its dependencies against
+#   the manifest's directory. The 9 `path = "./ployglots/<sibling>/..."`
+#   entries below only resolve from /application/ inside the container,
+#   where Dockerfile.fastapi COPYs this file. From the host's .bin/docker/
+#   directory, those paths point nowhere — so Dependency Graph runs fail
+#   with `path_dependencies_not_reachable`. Renaming to
+#   pyproject.docker.toml dodges the exact-name auto-discovery; the
+#   Dockerfile renames it back to pyproject.toml during COPY.
 #
 # Mirrors server/fastapi/pyproject.toml so the Dockerfile can resolve
 # every editable sibling from a single root file at

@@ -18,7 +18,9 @@
 # preserve intermediate stage layers. Size cost is intentional.
 #
 # Dependencies install from the root pyproject.toml that is COPY'd from
-# .bin/docker/pyproject.toml. That root manifest mirrors
+# .bin/docker/pyproject.docker.toml (renamed-on-COPY to dodge GitHub
+# Dependency Graph's `pyproject.toml` auto-discovery — see the file
+# header in .bin/docker/pyproject.docker.toml). That root manifest mirrors
 # server/fastapi/pyproject.toml's editable closure — same 9 path-deps +
 # uvicorn — with paths rewritten `./ployglots/<sibling>/...` to be
 # relative to /application/ (the WORKDIR). The .bin/docker/ location
@@ -80,10 +82,11 @@ COPY server/fastapi/ ./server/fastapi/
 
 # Root Poetry manifest. Mirrors server/fastapi/pyproject.toml's editable
 # closure with paths rewritten relative to /application/. See the file
-# header in .bin/docker/pyproject.toml for the drift-watch policy
-# (this file MUST stay in sync with server/fastapi/pyproject.toml; the
-# release workflow auto-regenerates it via .bin/docker/regenerate.py).
-COPY .bin/docker/pyproject.toml ./pyproject.toml
+# header in .bin/docker/pyproject.docker.toml for the drift-watch
+# policy and the rationale behind the .docker.toml suffix (this file
+# MUST stay in sync with server/fastapi/pyproject.toml; the release
+# workflow auto-regenerates it via .bin/docker/regenerate.py).
+COPY .bin/docker/pyproject.docker.toml ./pyproject.toml
 
 # Resolve all 9 editable path-deps + uvicorn from the root pyproject.toml.
 # `--no-root` skips installing the umbrella package itself (package-mode=false
