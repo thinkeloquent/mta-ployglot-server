@@ -46,11 +46,22 @@ FASTAPI_IMAGE            ?= mta-fastapi:$(DOCKER_TAG)
 FASTIFY_CONTAINER        ?= mta-fastify-svc
 FASTAPI_CONTAINER        ?= mta-fastapi-svc
 
-# Dockerfile locations. Defaults point at this repo's own server Dockerfiles.
-# Override to point at the reference platform Dockerfiles if needed, e.g.:
-#   make docker-build.fastify FASTIFY_DOCKERFILE=../mta-v800-platform/Dockerfile.fastify
-FASTIFY_DOCKERFILE       ?= server/fastify/Dockerfile
-FASTAPI_DOCKERFILE       ?= server/fastapi/Dockerfile
+# Dockerfile locations. Defaults point at the root-level cloud Dockerfiles
+# (Dockerfile.fastify / Dockerfile.fastapi). Those are the canonical
+# release/main images: they run a full `npm ci` / `poetry install` so every
+# file: / path-dep in server/<rt>/{package.json,pyproject.toml} resolves, and
+# they assume the flat release/main layout under ployglots/<sibling>/.
+#
+# Cloud builders without `make` can build them directly:
+#     docker build -f Dockerfile.fastify -t mta-fastify:tag .
+#     docker build -f Dockerfile.fastapi -t mta-fastapi:tag .
+#
+# The narrow per-server Dockerfiles at server/<rt>/Dockerfile still exist for
+# bootstrap-only / dev experiments — reach them via override:
+#     make docker-build.fastify FASTIFY_DOCKERFILE=server/fastify/Dockerfile
+#     make docker-build.fastify FASTIFY_DOCKERFILE=../mta-v800-platform/Dockerfile.fastify
+FASTIFY_DOCKERFILE       ?= Dockerfile.fastify
+FASTAPI_DOCKERFILE       ?= Dockerfile.fastapi
 
 # Build context — repo root so `COPY ployglots/...` and `COPY server/...`
 # both resolve regardless of which Dockerfile is selected.

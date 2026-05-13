@@ -78,6 +78,22 @@ ci: projections-check subtree-lint ci-install lint test build ## Full CI pipelin
 .PHONY: ci-local
 ci-local: doctor ci ## Local CI: run `doctor` first, then full pipeline
 
+# down.all — stop every runtime this repo can launch, in any combination.
+# Each underlying target is already idempotent; we still wrap with `|| true`
+# so a missing docker daemon (compose down / docker-down.all) doesn't
+# prevent dev-stop / prod-stop from running.
+.PHONY: down.all
+down.all: ## Stop everything: dev (host), prod (host), raw docker containers, compose stack
+	@echo "==> down.all: dev-stop"
+	@$(MAKE) --no-print-directory dev-stop || true
+	@echo "==> down.all: prod-stop"
+	@$(MAKE) --no-print-directory prod-stop || true
+	@echo "==> down.all: docker-down.all"
+	@$(MAKE) --no-print-directory docker-down.all || true
+	@echo "==> down.all: compose down"
+	@$(MAKE) --no-print-directory down || true
+	@echo "==> down.all: complete"
+
 # ---------------------------------------------------------------------------
 # help — sectioned listing across every included fragment
 # ---------------------------------------------------------------------------

@@ -1,0 +1,119 @@
+# syntax=docker/dockerfile:1.7
+# Dockerfile.fastapi — root-level cloud build for the standalone mta-fastapi-server.
+#
+# Build context: repo root. The flat layout under `ployglots/<sibling>/` is
+# assumed to be real directories (the `release/main` shape produced by the
+# subtree-assembly workflow). No symlinks, no submodules, no `make` required.
+#
+# Self-contained: a cloud builder that lacks `make` runs this with
+#     docker build -f Dockerfile.fastapi -t mta-fastapi:<tag> .
+# and the resulting image boots `python main.py` (uvicorn internal) on `$PORT`
+# (default 8080).
+#
+# Dependencies install **inside** server/fastapi/. No root-level pyproject.toml
+# is consulted. The 9 `path = "../../ployglots/<sibling>/..."` deps in
+# server/fastapi/pyproject.toml resolve against /application/ployglots/<sibling>/
+# which this Dockerfile COPY-supplies into the build context.
+#
+# Python is pinned to **3.11** to satisfy
+# `python = ">=3.11,<3.12"` in server/fastapi/pyproject.toml (and the SSOT in
+# .bin/python-pins.toml [meta] python-version).
+#
+# Editable-install layout note: every sibling is `develop = true`, so Poetry
+# writes a .pth file in the venv pointing at the source dir's absolute path
+# (e.g. /application/ployglots/mta-ployglot-pkg-env-resolve/packages/py/src).
+# The runtime stage uses the **same** /application prefix so those absolute
+# paths still resolve. We COPY the ployglots/ tree from the builder into the
+# runtime image.
+
+ARG PYTHON_IMAGE=python:3.11-slim
+
+# -----------------------------------------------------------------------------
+# Stage 1: builder — install poetry, resolve all 9 path-deps editable
+# -----------------------------------------------------------------------------
+FROM ${PYTHON_IMAGE} AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=true
+
+# Poetry version pinned by CLAUDE.md toolchain (poetry==2.3.2).
+RUN pip install --no-cache-dir "poetry==2.3.2"
+
+WORKDIR /application
+
+# Supply the per-server dep file + source AND every sibling it references.
+# `release/main` ships ployglots/<sibling>/ as real dirs; the .dockerignore at
+# the repo root strips **/node_modules, **/.venv, **/__pycache__, **/*.egg-info,
+# **/dist so we only carry source.
+COPY ployglots/      ./ployglots/
+COPY server/fastapi/ ./server/fastapi/
+
+# Resolve all 9 editable path-deps + uvicorn from server/fastapi/pyproject.toml.
+# `--no-root` skips installing the umbrella package itself (package-mode=false
+# anyway); `--only main` drops the dev group (watchfiles).
+WORKDIR /application/server/fastapi
+RUN poetry install --no-interaction --no-ansi --no-root --only main
+
+# Smoke-check that every editable sibling actually imports.
+RUN .venv/bin/python -c "import importlib; \
+mods=['fastapi_server','env_resolve','app_yaml_loader','app_yaml_config','app_yaml_fetch_config','runtime_template_resolver','app_yaml_from_context','polyglot_fetch_http_client','print_routes_fastapi']; \
+[importlib.import_module(m) for m in mods]; print('imports OK:', mods)"
+
+# -----------------------------------------------------------------------------
+# Stage 2: runtime — minimal, non-root, same /application prefix as builder
+# -----------------------------------------------------------------------------
+FROM ${PYTHON_IMAGE} AS runtime
+
+# Build identity — echoed by /healthz.
+ARG BUILD_ID="local"
+ARG BUILD_VERSION="0.0.0-dev"
+ARG GIT_COMMIT="unknown"
+ARG VAULT_SECRET_FILE=""
+
+# Non-root user (python:slim ships none). User/group is named `app`; the
+# home directory is /application to match the WORKDIR.
+RUN groupadd --system --gid 10001 app \
+ && useradd  --system --uid 10001 --gid app --home-dir /application --shell /sbin/nologin app \
+ && mkdir -p /application \
+ && chown app:app /application
+
+ENV PATH="/application/server/fastapi/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    BUILD_ID=${BUILD_ID} \
+    BUILD_VERSION=${BUILD_VERSION} \
+    GIT_COMMIT=${GIT_COMMIT} \
+    VAULT_SECRET_FILE=${VAULT_SECRET_FILE} \
+    PORT=8080 \
+    POLYGLOT_DEBUG=1
+
+WORKDIR /application
+
+# Keep the /application prefix identical to the builder stage so the .pth
+# files Poetry wrote (absolute paths under /application/ployglots/<sibling>/...)
+# still resolve.
+COPY --from=builder --chown=app:app /application/server/fastapi/.venv          ./server/fastapi/.venv
+COPY --from=builder --chown=app:app /application/server/fastapi/main.py        ./server/fastapi/main.py
+COPY --from=builder --chown=app:app /application/server/fastapi/config         ./server/fastapi/config
+COPY --from=builder --chown=app:app /application/server/fastapi/pyproject.toml ./server/fastapi/pyproject.toml
+COPY --from=builder --chown=app:app /application/server/fastapi/poetry.lock    ./server/fastapi/poetry.lock
+COPY --from=builder --chown=app:app /application/server/fastapi/poetry.toml    ./server/fastapi/poetry.toml
+COPY --from=builder --chown=app:app /application/ployglots                     ./ployglots
+
+USER app
+WORKDIR /application/server/fastapi
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import os,urllib.request,sys; \
+port=os.environ.get('PORT','8080'); \
+r=urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=2); \
+sys.exit(0 if r.status == 200 else 1)"
+
+# main.py boots uvicorn internally and respects $PORT.
+CMD ["python", "main.py"]

@@ -40,18 +40,37 @@ prod-preflight: ## Abort early if node / npm / uv are missing
 # ---------------------------------------------------------------------------
 # Sibling prebuild — same TS twins as dev. Building dist/ is a precondition
 # because every entry's `package.json#main` points at `dist/index.js`.
+#
+# Split into two passes (mirrors Makefile.devmode):
+#   1. prod-install-siblings — install at the workspace ROOT of each sibling
+#      (e.g. mta-ployglot-pkg-env-resolve/, which declares
+#      `"workspaces": ["packages/ts"]`). Devdeps are NOT omitted here: we
+#      need typescript/tsc to build. The prod contract ("frozen, no devdeps
+#      in runtime") applies at the runtime-staging step below, not at the
+#      sibling build step.
+#   2. prod-prebuild-siblings — run `npm run build` inside each packages/ts
+#      child. tsc resolves via npm's parent-dir bin lookup (the workspace
+#      root's hoisted node_modules/.bin/tsc).
 # ---------------------------------------------------------------------------
 
-.PHONY: prod-prebuild-siblings
-prod-prebuild-siblings: ## Build dist/ in every sibling ts twin (required before prod-install on fresh clones)
-	@for d in $(TS_PREBUILD_DIRS); do \
-	  if [ ! -d "$$d" ]; then echo "==> skip: $$d (not present)"; continue; fi; \
+.PHONY: prod-install-siblings
+prod-install-siblings: ## Install workspace deps (incl. build toolchain) in every sibling root
+	@for d in $(SIBLING_INSTALL_ROOTS); do \
+	  if [ ! -f "$$d/package.json" ]; then echo "==> skip: $$d (no top-level package.json)"; continue; fi; \
 	  echo "==> $$d"; \
 	  (cd "$$d" && \
-	    if [ -f package-lock.json ]; then NODE_ENV=production npm ci --omit=dev --no-audit --no-fund; \
+	    if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
 	    else echo "==> no package-lock.json — npm install (will write one)"; \
-	         NODE_ENV=production npm install --omit=dev --no-audit --no-fund; fi && \
-	    npm run build) || exit $$?; \
+	         npm install --no-audit --no-fund; fi) || exit $$?; \
+	done
+	@echo "==> sibling workspace deps installed (prod)"
+
+.PHONY: prod-prebuild-siblings
+prod-prebuild-siblings: prod-install-siblings ## Build dist/ in every sibling ts twin (required before prod-install on fresh clones)
+	@for d in $(TS_PREBUILD_DIRS); do \
+	  if [ ! -d "$$d" ]; then echo "==> skip: $$d (not present)"; continue; fi; \
+	  echo "==> $$d (build)"; \
+	  (cd "$$d" && npm run build) || exit $$?; \
 	done
 	@echo "==> sibling ts twins built (prod)"
 
@@ -67,13 +86,17 @@ prod-install-fastify: prod-prebuild-siblings ## Build bootstrap into .prod/fasti
 	  rsync -a --delete --exclude node_modules --exclude dist --exclude .smoke-logs \
 	    $(BOOTSTRAP_DIR)/fastify_server/ $(PROD_FASTIFY)/ || \
 	  cp -R $(BOOTSTRAP_DIR)/fastify_server/. $(PROD_FASTIFY)/
-	@# Build the bootstrap. `--omit=dev` strips test/build-only deps from the
-	@# runtime tree; the build step runs separately below.
+	@# Build the bootstrap. We install WITH devDependencies (typescript, etc.)
+	@# because the build script (`tsc`) needs them. Then we run the build,
+	@# then `npm prune --omit=dev` strips build-only deps back out so the
+	@# resulting node_modules/ that lands in the runtime tree is prod-clean.
+	@# Order matters: prune AFTER build, not before.
 	cd $(PROD_FASTIFY) && \
-	  if [ -f package-lock.json ]; then NODE_ENV=production npm ci --omit=dev --no-audit --no-fund; \
+	  if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
 	  else echo "==> no package-lock.json — npm install (will write one)"; \
-	       NODE_ENV=production npm install --omit=dev --no-audit --no-fund; fi
+	       npm install --no-audit --no-fund; fi
 	cd $(PROD_FASTIFY) && npm run build
+	cd $(PROD_FASTIFY) && NODE_ENV=production npm prune --omit=dev --no-audit --no-fund
 	@# Stage the standalone app (server/fastify) into .prod/fastify-app.
 	@# Critical difference vs Makefile.devmode: we DO NOT replace the
 	@# npm-installed sibling deps with symlinks afterward. `npm ci` resolves

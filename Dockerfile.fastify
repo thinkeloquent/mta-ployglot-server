@@ -1,0 +1,117 @@
+# syntax=docker/dockerfile:1.7
+# Dockerfile.fastify — root-level cloud build for the standalone mta-fastify-server.
+#
+# Build context: repo root. The flat layout under `ployglots/<sibling>/` is
+# assumed to be real directories (the `release/main` shape produced by the
+# subtree-assembly workflow). No symlinks, no submodules, no `make` required.
+#
+# Self-contained: a cloud builder that lacks `make` runs this with
+#     docker build -f Dockerfile.fastify -t mta-fastify:<tag> .
+# and the resulting image boots `node main.mjs` on `$PORT` (default 3000).
+#
+# Dependencies install **inside** server/fastify/. No root-level package.json /
+# pnpm-workspace.yaml is consulted. The 9 `file:` deps in
+# server/fastify/package.json resolve against /application/ployglots/<sibling>/ which
+# this Dockerfile COPY-supplies into the build context.
+#
+# Three TypeScript siblings need their dist/ generated BEFORE the top-level
+# `npm ci` runs, otherwise npm copies an empty source tree into node_modules:
+#   - ployglots/mta-ployglot-server-bootstrap/fastify_server   (tsc)
+#   - ployglots/mta-ployglot-pkg-env-resolve/packages/ts       (tsc)
+#   - ployglots/mta-ployglot-pkg-fetch-client/packages/ts      (tsup)
+# The other 6 siblings are pure `.mjs` (main → src/index.mjs) and need no build.
+#
+# Build-stage WORKDIR is /application (matches the reference platform
+# Dockerfiles' /applications convention, adapted to this repo's `application`
+# singular form).
+
+ARG NODE_IMAGE=node:22-slim
+
+# -----------------------------------------------------------------------------
+# Stage 1: builder — install + build siblings + install fastify
+# -----------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS builder
+
+# NPM registry — SSOT lives in Makefile.vars (NPM_REGISTRY ?= http://localhost:4873).
+# The Make-driven path (`make docker-build.fastify`) passes this through as
+# `--build-arg NPM_REGISTRY=...`. The default below mirrors Makefile.vars and is
+# only consulted when this Dockerfile is built RAW (direct `docker build ...`
+# outside the Makefile). The lockfiles' integrity hashes (sha512) are
+# registry-independent, so the sed-rewrite is a no-op when both sides agree.
+ARG NPM_REGISTRY=http://localhost:4873
+
+WORKDIR /application
+
+# Supply the per-server dep file + source AND every sibling it references.
+# `release/main` ships ployglots/<sibling>/ as real dirs; the .dockerignore at
+# the repo root strips **/node_modules, **/.venv, **/__pycache__, **/dist so
+# we only carry source.
+COPY ployglots/      ./ployglots/
+COPY server/fastify/ ./server/fastify/
+
+# Rewrite registry across every lockfile we'll exercise (bootstrap + fastify).
+# Other TS siblings have no lockfile.
+RUN sed -i "s|http://localhost:4873|${NPM_REGISTRY}|g" \
+        server/fastify/package-lock.json \
+        ployglots/mta-ployglot-server-bootstrap/fastify_server/package-lock.json
+
+# 1) Build the bootstrap (TypeScript → dist/) with its lockfile.
+WORKDIR /application/ployglots/mta-ployglot-server-bootstrap/fastify_server
+RUN npm ci --no-audit --no-fund \
+ && npm run build \
+ && npm prune --omit=dev
+
+# 2) Build env-resolve (TypeScript → dist/). No lockfile, so npm install.
+WORKDIR /application/ployglots/mta-ployglot-pkg-env-resolve/packages/ts
+RUN npm install --no-audit --no-fund \
+ && npm run build \
+ && npm prune --omit=dev
+
+# 3) Build fetch-client (tsup → dist/). No lockfile.
+WORKDIR /application/ployglots/mta-ployglot-pkg-fetch-client/packages/ts
+RUN npm install --no-audit --no-fund \
+ && npm run build \
+ && npm prune --omit=dev
+
+# 4) Install fastify against the per-server lockfile. npm follows every
+#    file:../../ployglots/<sibling>/... edge and copies the (now built) source
+#    tree of each sibling into node_modules/. All 9 deps resolve in one step.
+WORKDIR /application/server/fastify
+RUN npm ci --no-audit --no-fund \
+ && npm prune --omit=dev
+
+# -----------------------------------------------------------------------------
+# Stage 2: runtime — minimal, non-root
+# -----------------------------------------------------------------------------
+FROM ${NODE_IMAGE} AS runtime
+
+# Build identity — echoed by /healthz.
+ARG BUILD_ID="local"
+ARG BUILD_VERSION="0.0.0-dev"
+ARG GIT_COMMIT="unknown"
+ARG VAULT_SECRET_FILE=""
+
+ENV BUILD_ID=${BUILD_ID} \
+    BUILD_VERSION=${BUILD_VERSION} \
+    GIT_COMMIT=${GIT_COMMIT} \
+    VAULT_SECRET_FILE=${VAULT_SECRET_FILE} \
+    NODE_ENV=production \
+    PORT=3000 \
+    NODE_OPTIONS=--disable-proto=delete \
+    POLYGLOT_DEBUG=1
+
+WORKDIR /application
+
+COPY --from=builder --chown=node:node /application/server/fastify/package.json ./package.json
+COPY --from=builder --chown=node:node /application/server/fastify/main.mjs     ./main.mjs
+COPY --from=builder --chown=node:node /application/server/fastify/config       ./config
+COPY --from=builder --chown=node:node /application/server/fastify/node_modules ./node_modules
+
+USER node
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.PORT || 3000) + '/healthz', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+
+CMD ["node", "main.mjs"]
