@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Dockerfile.fastify — root-level cloud build for the standalone mta-fastify-server.
+# Dockerfile.fastify — single-stage cloud build for the standalone mta-fastify-server.
 #
 # Build context: repo root. The flat layout under `ployglots/<sibling>/` is
 # assumed to be real directories (the `release/main` shape produced by the
@@ -9,22 +9,27 @@
 #     docker build -f Dockerfile.fastify -t mta-fastify:<tag> .
 # and the resulting image boots `node main.mjs` on `$PORT` (default 3000).
 #
+# Single-stage / flattened: the previous multi-stage builder→runtime split
+# was collapsed into one FROM. The resulting image is larger because pnpm,
+# every sibling's source tree, and devDependency closures (after the prod
+# re-install) remain in the final image — but the build is simpler to read
+# and one-stage caching is more predictable for cloud builders that don't
+# preserve intermediate stage layers. Size cost is intentional.
+#
 # Package manager: **pnpm**. The reference platform Dockerfile uses pnpm and
-# we match it here. The host workflow still uses npm (per-server lockfiles are
-# package-lock.json); the Docker build re-resolves through pnpm against the
-# internal Verdaccio registry, so determinism comes from the pinned registry,
-# not from a lockfile transferred across toolchains. `--node-linker=hoisted`
-# keeps node_modules npm-flat so the runtime stage can `COPY` it as a normal
-# tree (pnpm's default symlink-to-store layout doesn't survive cross-stage
-# COPY cleanly).
+# we match it here. The host workflow still uses npm (per-server lockfiles
+# are package-lock.json); the Docker build re-resolves through pnpm against
+# the internal Verdaccio registry, so determinism comes from the pinned
+# registry, not from a lockfile transferred across toolchains.
+# `--node-linker=hoisted` keeps node_modules npm-flat.
 #
 # Workspace declaration files (package.json + pnpm-workspace.yaml + .npmrc)
-# are COPY'd from .bin/docker/ in the build context to /application/ in the
-# image. The 9 `file:` deps in server/fastify/package.json then resolve
-# against /application/ployglots/<sibling>/ which this Dockerfile
-# COPY-supplies into the build context. The .bin/docker/ location (not repo
-# root) prevents host-mode pnpm from finding the workspace via walk-up —
-# see Makefile.lang.node:7-15 for why that matters.
+# are COPY'd from .bin/docker/ in the build context to /application/. The
+# 9 `file:` deps in server/fastify/package.json resolve against
+# /application/ployglots/<sibling>/ which this Dockerfile COPY-supplies
+# into the build context. The .bin/docker/ location (not repo root)
+# prevents host-mode pnpm from finding the workspace via walk-up — see
+# Makefile.lang.node:7-15 for why that matters.
 #
 # Three TypeScript siblings need their dist/ generated BEFORE the top-level
 # install of fastify, otherwise pnpm copies an empty source tree into node_modules:
@@ -33,9 +38,11 @@
 #   - ployglots/mta-ployglot-pkg-fetch-client/packages/ts      (tsup)
 # The other 6 siblings are pure `.mjs` (main → src/index.mjs) and need no build.
 #
-# Build-stage WORKDIR is /application (matches the reference platform
-# Dockerfiles' /applications convention, adapted to this repo's `application`
-# singular form).
+# WORKDIR is /application (matches the reference platform Dockerfiles'
+# /applications convention, adapted to this repo's singular form). The
+# server runs from /application/server/fastify (where main.mjs lives);
+# main.mjs derives its baseDir from import.meta.url, so the config tree
+# at server/fastify/config/ resolves automatically.
 
 ARG NODE_IMAGE=node:22-slim
 # pnpm 10+ requires explicit approval of dependency build scripts and exits 1
@@ -45,29 +52,36 @@ ARG NODE_IMAGE=node:22-slim
 # reference Dockerfile relied on.
 ARG PNPM_VERSION=9
 
-# -----------------------------------------------------------------------------
-# Stage 1: builder — install pnpm, build siblings, install fastify
-# -----------------------------------------------------------------------------
-FROM ${NODE_IMAGE} AS builder
+FROM ${NODE_IMAGE}
 
+# Build identity — echoed by /healthz.
+ARG BUILD_ID="local"
+ARG BUILD_VERSION="0.0.0-dev"
+ARG GIT_COMMIT="unknown"
+ARG VAULT_SECRET_FILE=""
+ARG PNPM_VERSION
 # NPM registry — SSOT lives in Makefile.vars (NPM_REGISTRY ?= http://localhost:4873).
 # Both `npm install -g pnpm` and pnpm itself read NPM_CONFIG_REGISTRY, so we
-# export it as an ENV in this stage. Repo policy: never use a public registry
-# to bypass the internal mirror — make the container reach the host's
-# Verdaccio (Makefile.docker passes `--network=host`).
+# export it as ENV. Repo policy: never use a public registry to bypass the
+# internal mirror — make the container reach the host's Verdaccio
+# (Makefile.docker passes `--network=host`).
 ARG NPM_REGISTRY=http://localhost:4873
-ARG PNPM_VERSION
-ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
+
+ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY} \
+    NPM_CONFIG_NODE_LINKER=hoisted \
+    BUILD_ID=${BUILD_ID} \
+    BUILD_VERSION=${BUILD_VERSION} \
+    GIT_COMMIT=${GIT_COMMIT} \
+    VAULT_SECRET_FILE=${VAULT_SECRET_FILE} \
+    NODE_ENV=production \
+    PORT=3000 \
+    NODE_OPTIONS=--disable-proto=delete \
+    POLYGLOT_DEBUG=1
 
 # Install pnpm globally. (Using `npm install -g` rather than corepack to keep
 # the registry pinning consistent — corepack pulls from registry.npmjs.org by
 # default and would need separate config.)
 RUN npm install -g pnpm@${PNPM_VERSION}
-
-# `--node-linker=hoisted`: produce a flat npm-style node_modules tree instead
-# of pnpm's symlink-to-content-store default, so the runtime stage's
-# `COPY ... node_modules` brings everything across without dangling links.
-ENV NPM_CONFIG_NODE_LINKER=hoisted
 
 WORKDIR /application
 
@@ -83,8 +97,7 @@ COPY server/fastify/ ./server/fastify/
 # Dockerfile is a `COPY` consumer rather than the source of truth for the
 # member-package list. Placing those files in .bin/docker/ — not at the
 # repo root — keeps host-mode pnpm's directory walk-up from finding them
-# and hijacking Makefile.lang.node's per-sibling install strategy
-# (see the warning at Makefile.lang.node:7-15).
+# and hijacking Makefile.lang.node's per-sibling install strategy.
 #
 # Why pnpm needs a workspace declaration at all:
 #   fastify's per-server package.json uses npm-style `file:../../ployglots/...`
@@ -93,9 +106,8 @@ COPY server/fastify/ ./server/fastify/
 #   dep) resolve to the local copy without a registry lookup. pnpm doesn't
 #   do that implicit hoisting — it would 404 against the internal registry.
 #   Declaring all siblings + server/fastify as workspace packages, with
-#   pnpm's default `link-workspace-packages: true`, makes intra-workspace
-#   deps resolve locally by NAME regardless of whether they're declared
-#   `file:` or as a SemVer range.
+#   pnpm's `link-workspace-packages=deep`, makes intra-workspace deps
+#   resolve locally by NAME regardless of `file:` vs SemVer.
 COPY .bin/docker/package.json        ./package.json
 COPY .bin/docker/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY .bin/docker/.npmrc              ./.npmrc
@@ -115,34 +127,19 @@ RUN pnpm --filter @ployglot/fastify-server      run build \
 #    closure. This keeps only the runtime-needed packages in each tree.
 RUN pnpm install --prod --filter 'mta-fastify-server...'
 
-# -----------------------------------------------------------------------------
-# Stage 2: runtime — minimal, non-root
-# -----------------------------------------------------------------------------
-FROM ${NODE_IMAGE} AS runtime
-
-# Build identity — echoed by /healthz.
-ARG BUILD_ID="local"
-ARG BUILD_VERSION="0.0.0-dev"
-ARG GIT_COMMIT="unknown"
-ARG VAULT_SECRET_FILE=""
-
-ENV BUILD_ID=${BUILD_ID} \
-    BUILD_VERSION=${BUILD_VERSION} \
-    GIT_COMMIT=${GIT_COMMIT} \
-    VAULT_SECRET_FILE=${VAULT_SECRET_FILE} \
-    NODE_ENV=production \
-    PORT=3000 \
-    NODE_OPTIONS=--disable-proto=delete \
-    POLYGLOT_DEBUG=1
-
-WORKDIR /application
-
-COPY --from=builder --chown=node:node /application/server/fastify/package.json ./package.json
-COPY --from=builder --chown=node:node /application/server/fastify/main.mjs     ./main.mjs
-COPY --from=builder --chown=node:node /application/server/fastify/config       ./config
-COPY --from=builder --chown=node:node /application/server/fastify/node_modules ./node_modules
+# Single-stage builds don't get the implicit fresh-image isolation that the
+# previous multi-stage runtime layer gave us. Hand the application tree to
+# the `node` user (provided by node:*-slim images) before dropping privs.
+RUN chown -R node:node /application
 
 USER node
+
+# Run from where main.mjs lives. main.mjs derives baseDir from
+# import.meta.url, so config/<*> resolves to server/fastify/config/<*>.
+# node module resolution walks up from CWD and finds either
+# server/fastify/node_modules or /application/node_modules (pnpm's hoisted
+# layout populates both).
+WORKDIR /application/server/fastify
 
 EXPOSE 3000
 

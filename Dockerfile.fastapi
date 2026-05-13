@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Dockerfile.fastapi — root-level cloud build for the standalone mta-fastapi-server.
+# Dockerfile.fastapi — single-stage cloud build for the standalone mta-fastapi-server.
 #
 # Build context: repo root. The flat layout under `ployglots/<sibling>/` is
 # assumed to be real directories (the `release/main` shape produced by the
@@ -7,86 +7,38 @@
 #
 # Self-contained: a cloud builder that lacks `make` runs this with
 #     docker build -f Dockerfile.fastapi -t mta-fastapi:<tag> .
-# and the resulting image boots `python main.py` (uvicorn internal) on `$PORT`
-# (default 8080).
+# and the resulting image boots `python main.py` (uvicorn internal) on
+# `$PORT` (default 8080).
+#
+# Single-stage / flattened: the previous multi-stage builder→runtime split
+# was collapsed into one FROM. The resulting image is larger because
+# poetry, system build deps, and every sibling's editable source tree
+# remain in the final image — but the build is simpler to read and
+# one-stage caching is more predictable for cloud builders that don't
+# preserve intermediate stage layers. Size cost is intentional.
 #
 # Dependencies install from the root pyproject.toml that is COPY'd from
-# .bin/docker/pyproject.toml in the build context to /application/ in the
-# image. That root manifest mirrors server/fastapi/pyproject.toml's editable
-# sibling closure — same 9 path-deps + uvicorn — with paths rewritten
-# `./ployglots/<sibling>/...` to be relative to /application/ (the WORKDIR).
-# The .bin/docker/ location (not repo root) prevents host-mode poetry from
-# treating mta-ployglot-server's root as a Python project. The .venv lands
-# at /application/.venv/ (instead of /application/server/fastapi/.venv/);
-# Poetry's editable .pth files contain absolute paths under
-# /application/ployglots/<sibling>/... which match the layout COPY'd into
-# the runtime stage so the .pth indirection keeps resolving.
+# .bin/docker/pyproject.toml. That root manifest mirrors
+# server/fastapi/pyproject.toml's editable closure — same 9 path-deps +
+# uvicorn — with paths rewritten `./ployglots/<sibling>/...` to be
+# relative to /application/ (the WORKDIR). The .bin/docker/ location
+# (not repo root) prevents host-mode poetry from treating
+# mta-ployglot-server's root as a Python project. The .venv lands at
+# /application/.venv/.
 #
-# Python is pinned to **3.11** to satisfy
-# `python = ">=3.11,<3.12"` in server/fastapi/pyproject.toml (and the SSOT in
+# Python is pinned to **3.11** to satisfy `python = ">=3.11,<3.12"` in
+# both the per-server and root pyprojects (and the SSOT in
 # .bin/python-pins.toml [meta] python-version).
 #
-# Editable-install layout note: every sibling is `develop = true`, so Poetry
-# writes a .pth file in the venv pointing at the source dir's absolute path
-# (e.g. /application/ployglots/mta-ployglot-pkg-env-resolve/packages/py/src).
-# The runtime stage uses the **same** /application prefix so those absolute
-# paths still resolve. We COPY the ployglots/ tree from the builder into the
-# runtime image.
+# Editable-install layout note: every sibling is `develop = true`, so
+# Poetry writes a .pth file in the venv pointing at the source dir's
+# absolute path (e.g. /application/ployglots/<sibling>/...). The
+# /application/ prefix doesn't change after install, so those absolute
+# paths keep resolving for the lifetime of the image.
 
 ARG PYTHON_IMAGE=python:3.11-slim
 
-# -----------------------------------------------------------------------------
-# Stage 1: builder — install poetry, resolve all 9 path-deps editable
-# -----------------------------------------------------------------------------
-FROM ${PYTHON_IMAGE} AS builder
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_IN_PROJECT=true
-
-# Poetry version pinned by CLAUDE.md toolchain (poetry==2.3.2).
-RUN pip install --no-cache-dir "poetry==2.3.2"
-
-WORKDIR /application
-
-# Supply the per-server dep file + source AND every sibling it references.
-# `release/main` ships ployglots/<sibling>/ as real dirs; the .dockerignore at
-# the repo root strips **/node_modules, **/.venv, **/__pycache__, **/*.egg-info,
-# **/dist so we only carry source.
-COPY ployglots/      ./ployglots/
-COPY server/fastapi/ ./server/fastapi/
-
-# Root Poetry manifest. Mirrors server/fastapi/pyproject.toml's editable
-# closure with paths rewritten relative to /application/. See the file
-# header in .bin/docker/pyproject.toml for the drift-watch policy
-# (this file MUST stay in sync with server/fastapi/pyproject.toml).
-COPY .bin/docker/pyproject.toml ./pyproject.toml
-
-# Resolve all 9 editable path-deps + uvicorn from the root pyproject.toml.
-# `--no-root` skips installing the umbrella package itself (package-mode=false
-# anyway); `--only main` drops the dev group (watchfiles).
-#
-# No host-generated poetry.lock is reused here — the root pyproject is
-# docker-only and has no checked-in lockfile, so poetry resolves fresh
-# against the `./ployglots/<sibling>/...` paths that match the container's
-# /application/ layout.
-RUN poetry install --no-interaction --no-ansi --no-root --only main
-
-# Smoke-check that every editable sibling is installed (one entry per sibling
-# in `pip list --editable`). Counts the 9 expected packages so a silent drop
-# fails the build.
-RUN .venv/bin/pip list --editable 2>/dev/null \
- | tail -n +3 \
- | tee /dev/stderr \
- | (count=$(wc -l) ; [ "$count" -eq 9 ] || { echo "FAIL: expected 9 editable siblings, got $count"; exit 1; }) \
- && echo "OK: 9 editable siblings installed"
-
-# -----------------------------------------------------------------------------
-# Stage 2: runtime — minimal, non-root, same /application prefix as builder
-# -----------------------------------------------------------------------------
-FROM ${PYTHON_IMAGE} AS runtime
+FROM ${PYTHON_IMAGE}
 
 # Build identity — echoed by /healthz.
 ARG BUILD_ID="local"
@@ -94,17 +46,13 @@ ARG BUILD_VERSION="0.0.0-dev"
 ARG GIT_COMMIT="unknown"
 ARG VAULT_SECRET_FILE=""
 
-# Non-root user (python:slim ships none). User/group is named `app`; the
-# home directory is /application to match the WORKDIR.
-RUN groupadd --system --gid 10001 app \
- && useradd  --system --uid 10001 --gid app --home-dir /application --shell /sbin/nologin app \
- && mkdir -p /application \
- && chown app:app /application
-
-ENV PATH="/application/.venv/bin:${PATH}" \
-    PYTHONDONTWRITEBYTECODE=1 \
+ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    PATH="/application/.venv/bin:${PATH}" \
     BUILD_ID=${BUILD_ID} \
     BUILD_VERSION=${BUILD_VERSION} \
     GIT_COMMIT=${GIT_COMMIT} \
@@ -112,20 +60,54 @@ ENV PATH="/application/.venv/bin:${PATH}" \
     PORT=8080 \
     POLYGLOT_DEBUG=1
 
+# Poetry version pinned by CLAUDE.md toolchain (poetry==2.3.2).
+RUN pip install --no-cache-dir "poetry==2.3.2"
+
+# Non-root user (python:slim ships none). User/group is `app`; home dir is
+# /application to match the WORKDIR. Created before COPY so the final
+# `chown -R` is the only step that has to touch the application tree.
+RUN groupadd --system --gid 10001 app \
+ && useradd  --system --uid 10001 --gid app --home-dir /application --shell /sbin/nologin app
+
 WORKDIR /application
 
-# Keep the /application prefix identical to the builder stage so the .pth
-# files Poetry wrote (absolute paths under /application/ployglots/<sibling>/...)
-# still resolve. The .venv now lives at /application/.venv/ (root, not under
-# server/fastapi/) because the install ran against the root pyproject.toml
-# COPY'd from .bin/docker/.
-COPY --from=builder --chown=app:app /application/.venv                         ./.venv
-COPY --from=builder --chown=app:app /application/server/fastapi/main.py        ./server/fastapi/main.py
-COPY --from=builder --chown=app:app /application/server/fastapi/config         ./server/fastapi/config
-COPY --from=builder --chown=app:app /application/server/fastapi/pyproject.toml ./server/fastapi/pyproject.toml
-COPY --from=builder --chown=app:app /application/ployglots                     ./ployglots
+# Supply the per-server dep file + source AND every sibling it references.
+# `release/main` ships ployglots/<sibling>/ as real dirs; the .dockerignore
+# at the repo root strips **/node_modules, **/.venv, **/__pycache__,
+# **/*.egg-info, **/dist so we only carry source.
+COPY ployglots/      ./ployglots/
+COPY server/fastapi/ ./server/fastapi/
+
+# Root Poetry manifest. Mirrors server/fastapi/pyproject.toml's editable
+# closure with paths rewritten relative to /application/. See the file
+# header in .bin/docker/pyproject.toml for the drift-watch policy
+# (this file MUST stay in sync with server/fastapi/pyproject.toml; the
+# release workflow auto-regenerates it via .bin/docker/regenerate.py).
+COPY .bin/docker/pyproject.toml ./pyproject.toml
+
+# Resolve all 9 editable path-deps + uvicorn from the root pyproject.toml.
+# `--no-root` skips installing the umbrella package itself (package-mode=false
+# anyway); `--only main` drops the dev group (watchfiles).
+RUN poetry install --no-interaction --no-ansi --no-root --only main
+
+# Smoke-check that every editable sibling is installed (one entry per
+# sibling in `pip list --editable`). Counts the 9 expected packages so a
+# silent drop fails the build.
+RUN .venv/bin/pip list --editable 2>/dev/null \
+ | tail -n +3 \
+ | tee /dev/stderr \
+ | (count=$(wc -l) ; [ "$count" -eq 9 ] || { echo "FAIL: expected 9 editable siblings, got $count"; exit 1; }) \
+ && echo "OK: 9 editable siblings installed"
+
+# Single-stage builds don't get the implicit fresh-image isolation that
+# the previous multi-stage runtime layer gave us. Hand the application
+# tree to the non-root `app` user before dropping privs.
+RUN chown -R app:app /application
 
 USER app
+
+# main.py uses CWD-relative config paths (e.g. "config/environment"), so
+# run from where main.py lives.
 WORKDIR /application/server/fastapi
 
 EXPOSE 8080
