@@ -206,6 +206,23 @@ jobs:
             git commit -m "chore(release): regenerate .bin/docker/* from per-server manifests"
           fi
 
+      - name: Regenerate .bin/docker/path.sh from ployglots/ module layout
+        # Walks ployglots/<sibling>/**/{pyproject.toml,package.json} (now real
+        # directories after subtree-assemble) and emits .bin/docker/path.sh
+        # with PYTHONPATH (Python module roots, src-layout aware) + PATH
+        # (Node node_modules/.bin dirs). Companion to Dockerfile.fastapi:99-104,
+        # which smoke-checks `pip list --editable` for the venv side; this
+        # step is the inverse — a static, on-disk inventory of every module
+        # location, valid even for tools invoked outside the venv. Idempotent;
+        # commit-on-diff mirrors the per-server-manifest regen above.
+        run: |
+          set -euo pipefail
+          ./scripts/workspace/generate-docker-path.sh
+          if ! git diff --quiet -- .bin/docker/path.sh; then
+            git add .bin/docker/path.sh
+            git commit -m "chore(release): regenerate .bin/docker/path.sh from ployglots/ module layout"
+          fi
+
       - name: Prepend // @ts-nocheck to every TypeScript source file
         # Bulk-disable strict TypeScript checking across the assembled release
         # tree before orphan-collapse. The Dockerfile.fastify build runs
