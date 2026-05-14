@@ -90,9 +90,9 @@ DOCKER_STAGE_PREREQ       =
 endif
 
 # Host:container port mapping. Container-internal ports are fixed by the
-# Dockerfiles (fastify=3000, fastapi=8080). Host ports default to the same
+# Dockerfiles (fastify=8080, fastapi=8080). Host ports default to the same
 # values Makefile.vars uses for the compose stack.
-FASTIFY_CONTAINER_PORT   ?= 3000
+FASTIFY_CONTAINER_PORT   ?= 8080
 FASTAPI_CONTAINER_PORT   ?= 8080
 FASTIFY_HOST_PORT        ?= $(FASTIFY_PORT)
 FASTAPI_HOST_PORT        ?= $(FASTAPI_PORT)

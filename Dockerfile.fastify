@@ -7,7 +7,7 @@
 #
 # Self-contained: a cloud builder that lacks `make` runs this with
 #     docker build -f Dockerfile.fastify -t mta-fastify:<tag> .
-# and the resulting image boots `node main.mjs` on `$PORT` (default 3000).
+# and the resulting image boots `node main.mjs` on `$PORT` (default 8080).
 #
 # Single-stage / flattened: the previous multi-stage builder→runtime split
 # was collapsed into one FROM. The resulting image is larger because pnpm,
@@ -117,7 +117,7 @@ COPY .bin/docker/.npmrc              ./.npmrc
 
 # 1) Install all workspace deps. pnpm walks every package's deps and resolves
 #    by-name within the workspace before consulting the registry.
-RUN pnpm install --recursive
+RUN NODE_ENV=development pnpm install --recursive
 
 # 2) Build the 3 TypeScript siblings so dist/ exists before fastify's runtime
 #    needs to import them. The .mjs siblings need no build step.
@@ -132,7 +132,7 @@ RUN pnpm -r --if-present run install
 # Runtime-only env. Set AFTER the install/build/prune steps so NODE_ENV=production
 # doesn't suppress devDependencies during step 1's `pnpm install --recursive`.
 ENV NODE_ENV=production \
-    PORT=3000 \
+    PORT=8080 \
     NODE_OPTIONS=--disable-proto=delete
 
 # Single-stage builds don't get the implicit fresh-image isolation that the
@@ -149,9 +149,9 @@ USER node
 # layout populates both).
 WORKDIR /application/server/fastify
 
-EXPOSE 3000
+EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.PORT || 3000) + '/healthz', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+    CMD node -e "require('http').get('http://127.0.0.1:' + (process.env.PORT || 8080) + '/healthz', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
 CMD ["node", "main.mjs"]
