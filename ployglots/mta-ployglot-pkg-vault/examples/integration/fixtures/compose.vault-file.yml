@@ -1,0 +1,21 @@
+# Layered on top of mta-ployglot-server/docker-compose.yml. Usage:
+#   docker compose -f /path/to/mta-ployglot-server/docker-compose.yml \
+#                  -f compose.vault-file.yml up --build
+services:
+  fastify:
+    build:
+      args:
+        EXTRA_NPM: "@polyglot/vault-file"
+    environment:
+      VAULT_ENV_PATH: /app/.env
+    volumes:
+      - ./.env.sample:/app/.env:ro
+
+  fastapi:
+    build:
+      args:
+        EXTRA_PIP: polyglot-vault-file
+    environment:
+      VAULT_ENV_PATH: /app/.env
+    volumes:
+      - ./.env.sample:/app/.env:ro

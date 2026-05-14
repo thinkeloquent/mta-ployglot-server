@@ -1,0 +1,43 @@
+# Node
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.pnpm-store/
+.npm/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+build/
+.tox/
+.mypy_cache/
+uv.lock
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# env
+.env
+.env.local
+.env.*.local
+
+
+# Local symlink to mta-ployglot-agentfiles-claude (formerly a submodule)
+.claude
+package-lock.json

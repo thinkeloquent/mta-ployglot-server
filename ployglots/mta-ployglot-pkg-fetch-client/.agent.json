@@ -1,0 +1,66 @@
+{
+  "schema": "ployglot-agentmd-usages/v1",
+  "generated_at": "2026-04-24T00:00:00Z",
+  "repo": "mta-ployglot-pkg-fetch-client",
+  "layout": "packages/<language>/",
+  "languages": ["ts", "py"],
+  "packages": [
+    {
+      "key": "fetch-http-client",
+      "language": "ts",
+      "path": "packages/ts",
+      "agent_md": "packages/ts/.agent.md",
+      "dist_name": "@polyglot/fetch-http-client",
+      "version": "1.0.0",
+      "runtime": "node>=18",
+      "install": "npm install @polyglot/fetch-http-client undici",
+      "entry": {
+        "main": "./dist/index.js",
+        "types": "./dist/index.d.ts",
+        "subpath_exports": [".", "./sdk", "./auth", "./exceptions"]
+      },
+      "private": false,
+      "twin_of": { "key": "fetch-http-client", "language": "py" },
+      "stale": false
+    },
+    {
+      "key": "fetch-http-client",
+      "language": "py",
+      "path": "packages/py",
+      "agent_md": "packages/py/.agent.md",
+      "dist_name": "polyglot-fetch-http-client",
+      "import_name": "fetch_http_client",
+      "version": "0.1.0",
+      "runtime": "python>=3.11",
+      "install": "pip install polyglot-fetch-http-client",
+      "entry": {
+        "wheel_packages": ["fetch_http_client"],
+        "py_typed": true
+      },
+      "private": false,
+      "twin_of": { "key": "fetch-http-client", "language": "ts" },
+      "stale": false
+    }
+  ],
+  "workspace": {
+    "node": {
+      "root_manifest": "package.json",
+      "workspaces": ["packages/ts"],
+      "lock": "package-lock.json"
+    },
+    "python": {
+      "root_manifest": "pyproject.toml",
+      "uv_workspace_members": ["packages/py"],
+      "uv_sources": { "polyglot-fetch-http-client": { "workspace": true } },
+      "lock": "uv.lock"
+    }
+  },
+  "root_artifacts": {
+    "agent_md": ".agent.md",
+    "agent_json": ".agent.json",
+    "agents_dir": ".agents/",
+    "agents_files": [".agents/parity.md", ".agents/build-matrix.md"]
+  },
+  "unclassified": [],
+  "stale_files": []
+}

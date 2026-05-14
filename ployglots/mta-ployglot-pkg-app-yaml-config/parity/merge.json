@@ -1,0 +1,32 @@
+[
+  {
+    "name": "objects-recurse",
+    "base": { "a": { "x": 1, "y": 2 } },
+    "override": { "a": { "y": 20, "z": 30 } },
+    "expected": { "a": { "x": 1, "y": 20, "z": 30 } }
+  },
+  {
+    "name": "arrays-replace",
+    "base": { "items": [1, 2, 3] },
+    "override": { "items": [9] },
+    "expected": { "items": [9] }
+  },
+  {
+    "name": "primitives-replace",
+    "base": { "n": 1, "s": "old", "b": true },
+    "override": { "n": 2, "s": "new", "b": false },
+    "expected": { "n": 2, "s": "new", "b": false }
+  },
+  {
+    "name": "nested-object-recurse",
+    "base": { "a": { "b": { "c": 1 } } },
+    "override": { "a": { "b": { "d": 2 } } },
+    "expected": { "a": { "b": { "c": 1, "d": 2 } } }
+  },
+  {
+    "name": "mixed-types-replace",
+    "base": { "k": { "x": 1 } },
+    "override": { "k": [1, 2] },
+    "expected": { "k": [1, 2] }
+  }
+]

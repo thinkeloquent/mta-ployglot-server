@@ -1,0 +1,22 @@
+{
+  "name": "@ployglot/runtime-template-resolver",
+  "version": "0.1.0",
+  "description": "Engine — resolves {{path}}, {{fn:NAME}}, {{env.VAR}} templates against a context.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": ["src/", "README.md"],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "@org/env-resolve": "file:../../../mta-ployglot-pkg-env-resolve/packages/ts"
+  },
+  "scripts": {
+    "test": "node --test '__tests__/**/*.test.mjs'"
+  }
+}

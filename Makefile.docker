@@ -1,0 +1,526 @@
+# Makefile.docker — direct `docker` (NOT `docker compose`) lifecycle for the
+# two server runtimes. Parallel to Makefile.compose: Makefile.compose drives
+# the whole stack through `docker compose`; this fragment treats each runtime
+# as a standalone container managed by raw `docker build` / `docker run`.
+#
+# Owns:
+#   - per-runtime image build / rebuild (clear-cache variants)
+#   - per-runtime container run / cleanup / shell / logs
+#   - aggregate `.all` variants that fan out to both
+#   - host-side docker daemon controls (start / stop / kill / restart / status)
+#   - VAULT_MOUNT bind-mount + build-arg wiring
+#
+# Every target is prefixed `docker-` so they never collide with the
+# `docker compose`-based targets in Makefile.compose (which own `up` / `down`
+# / `logs` / `ps` / `build.docker` without the `docker-` prefix).
+#
+# ---------------------------------------------------------------------------
+# Vault mount
+# ---------------------------------------------------------------------------
+#
+# Set VAULT_MOUNT=<host-path> to bind-mount a vault/secrets file into each
+# container read-only and export VAULT_SECRET_FILE inside the container
+# pointing at the mount path. This mirrors the reference platform
+# Dockerfiles' build-arg/env wiring at:
+#   ../mta-v800-platform/Dockerfile.fastapi:33   ARG VAULT_SECRET_FILE=""
+#   ../mta-v800-platform/Dockerfile.fastify:47   ARG VAULT_SECRET_FILE=""
+#
+# Example:
+#   make docker-up.all VAULT_MOUNT=$HOME/.vault/secrets.json
+#   make docker-build.servers VAULT_MOUNT=$HOME/.vault/secrets.json
+#
+# When VAULT_MOUNT is empty (the default), no `-v` / `-e` / `--build-arg` for
+# vault is added — the runtime falls back to whatever the Dockerfile sets.
+
+# ---------------------------------------------------------------------------
+# variables — every value overridable from .env or `make VAR=… <target>`
+# ---------------------------------------------------------------------------
+
+# Image / container identity.
+DOCKER_TAG               ?= local
+FASTIFY_IMAGE            ?= mta-fastify:$(DOCKER_TAG)
+FASTAPI_IMAGE            ?= mta-fastapi:$(DOCKER_TAG)
+
+# Container names differ from compose's `mta-fastify`/`mta-fastapi` so the
+# two lifecycles can co-exist on one host without colliding.
+FASTIFY_CONTAINER        ?= mta-fastify-svc
+FASTAPI_CONTAINER        ?= mta-fastapi-svc
+
+# Dockerfile locations. Defaults point at the root-level cloud Dockerfiles
+# (Dockerfile.fastify / Dockerfile.fastapi). Those are the canonical
+# release/main images: they run a full `npm ci` / `poetry install` so every
+# file: / path-dep in server/<rt>/{package.json,pyproject.toml} resolves, and
+# they assume the flat release/main layout under ployglots/<sibling>/.
+#
+# Cloud builders without `make` can build them directly:
+#     docker build -f Dockerfile.fastify -t mta-fastify:tag .
+#     docker build -f Dockerfile.fastapi -t mta-fastapi:tag .
+#
+# The narrow per-server Dockerfiles at server/<rt>/Dockerfile still exist for
+# bootstrap-only / dev experiments — reach them via override:
+#     make docker-build.fastify FASTIFY_DOCKERFILE=server/fastify/Dockerfile
+#     make docker-build.fastify FASTIFY_DOCKERFILE=../mta-v800-platform/Dockerfile.fastify
+FASTIFY_DOCKERFILE       ?= Dockerfile.fastify
+FASTAPI_DOCKERFILE       ?= Dockerfile.fastapi
+
+# Build context — branch-aware.
+#
+# The canonical cloud-build branch is `release/main`, where every entry under
+# ployglots/<sibling>/ is a real squashed-subtree directory. There the build
+# context is the repo root and `COPY ployglots/...` resolves naturally.
+#
+# On `main` (and any other branch where workspace.toml is hydrated via
+# symlinks under ployglots/<sibling>/ → ../../<sibling>), Docker's COPY cannot
+# follow symlinks that escape the build context, so each sibling lands as a
+# broken/empty entry and the install step fails. We detect that mode at
+# parse time and materialize a staged context under .docker-stage/ via
+# `rsync -aL` (dereference symlinks). The Dockerfile and build flow stay
+# unchanged — only the context root flips.
+#
+# Detection probe: is ployglots/mta-ployglot-server-bootstrap a symlink?
+DOCKER_PLOYGLOTS_ARE_SYMLINKS := $(shell test -L $(ROOT_DIR)/ployglots/mta-ployglot-server-bootstrap 2>/dev/null && echo 1 || echo 0)
+DOCKER_STAGE_DIR              ?= $(ROOT_DIR)/.docker-stage
+
+ifeq ($(DOCKER_PLOYGLOTS_ARE_SYMLINKS),1)
+DOCKER_BUILD_CONTEXT     ?= $(DOCKER_STAGE_DIR)
+DOCKER_STAGE_PREREQ       = docker-stage
+else
+DOCKER_BUILD_CONTEXT     ?= $(ROOT_DIR)
+DOCKER_STAGE_PREREQ       =
+endif
+
+# Host:container port mapping. Container-internal ports are fixed by the
+# Dockerfiles (fastify=8080, fastapi=8080). Host ports default to the same
+# values Makefile.vars uses for the compose stack.
+FASTIFY_CONTAINER_PORT   ?= 8080
+FASTAPI_CONTAINER_PORT   ?= 8080
+FASTIFY_HOST_PORT        ?= $(FASTIFY_PORT)
+FASTAPI_HOST_PORT        ?= $(FASTAPI_PORT)
+
+# VAULT_MOUNT — host-side vault file. Empty = no mount (no -v / -e / --build-arg
+# for vault is emitted). When set, the file is mounted read-only into each
+# container at VAULT_MOUNT_TARGET and VAULT_SECRET_FILE is exported.
+VAULT_MOUNT              ?=
+VAULT_MOUNT_TARGET       ?= /run/secrets/vault.json
+
+# Docker Desktop (macOS) app name; overridable for forks ("OrbStack", etc.).
+DOCKER_DESKTOP_APP       ?= Docker
+
+# Extra docker-run flags, extendable via .env or CLI:
+#   make docker-run.all DOCKER_RUN_EXTRA="--cpus=2 --memory=1g"
+DOCKER_RUN_EXTRA         ?=
+
+# Logging mode inside the container.
+#
+# The host-direct dev mode (Makefile.devmode) writes server logs to .dev/
+# files (fastify.log / fastify.request.log / fastify.error.log and the
+# fastapi.* equivalents). Those paths are NOT reachable from inside a
+# container, so for docker-mode we flip the runtime to write structured
+# per-request and per-error JSON to stdout / stderr instead — visible via
+# `make docker-log.fastify` / `docker logs <container>`.
+#
+# Implementation (see server/fastify/main.mjs and server/fastapi/main.py):
+#   LOG_DIR set     → JSONL files at <LOG_DIR>/{fastify,fastapi}.*.log
+#   LOG_CONSOLE=1   → JSONL to stdout (request) / stderr (error)
+#   neither set     → no per-request hooks; framework's stdout logger only
+#
+# Defaults below send everything to console. Override DOCKER_LOG_CONSOLE=0
+# to disable the JSONL middleware entirely (framework logs still flow to
+# stdout); or set DOCKER_LOG_DIR=<container-path> + bind-mount a writable
+# host volume to send JSONL to files inside the container instead.
+DOCKER_LOG_CONSOLE       ?= 1
+DOCKER_LOG_DIR           ?=
+
+# Derived: optional vault-related flags. Defined with `=` (recursively
+# expanded) so $(VAULT_MOUNT) is re-read each time — that lets a CLI
+# override take effect even though Makefile.docker is parsed before the
+# command-line variable is set.
+DOCKER_VAULT_RUN_FLAGS    = $(if $(strip $(VAULT_MOUNT)),-v $(VAULT_MOUNT):$(VAULT_MOUNT_TARGET):ro -e VAULT_SECRET_FILE=$(VAULT_MOUNT_TARGET),)
+DOCKER_VAULT_BUILD_FLAGS  = $(if $(strip $(VAULT_MOUNT)),--build-arg VAULT_SECRET_FILE=$(VAULT_MOUNT_TARGET),)
+
+# Derived: log-routing flags. LOG_DIR (if set) wins inside the runtime; we
+# emit it only when DOCKER_LOG_DIR is non-empty so the default container has
+# no LOG_DIR variable at all (avoids accidentally pointing at host paths).
+DOCKER_LOG_RUN_FLAGS      = $(if $(strip $(DOCKER_LOG_DIR)),-e LOG_DIR=$(DOCKER_LOG_DIR),-e LOG_CONSOLE=$(DOCKER_LOG_CONSOLE))
+
+# Network mode for `docker build`. The default `--network=host` makes the
+# build container share the host's network namespace so it can reach the
+# internal Verdaccio mirror at `http://localhost:4873` (NPM_REGISTRY SSOT in
+# Makefile.vars) and any other host-local index. Public-registry overrides
+# (e.g. `NPM_REGISTRY=https://registry.npmjs.org`) are NOT supported by repo
+# policy — never bypass the internal registry to "fix" a build error.
+#
+# macOS Docker Desktop note: requires "Enable host networking" in Settings →
+# Resources → Network. Without it, `--network=host` is silently ignored on
+# Mac and localhost from the container points at the container itself.
+#
+# Override only when the build target genuinely runs offline / in a sandbox
+# that forbids host network access (e.g. CI in a hermetic builder), e.g.:
+#   make docker-build.fastify DOCKER_BUILD_NETWORK=
+DOCKER_BUILD_NETWORK     ?= host
+
+# Common build flags applied to every `docker build` invocation. Pulls in
+# the NPM_REGISTRY SSOT (Makefile.vars) the same way compose builds do.
+DOCKER_BUILD_FLAGS        = $(if $(strip $(DOCKER_BUILD_NETWORK)),--network=$(DOCKER_BUILD_NETWORK),) \
+                            --build-arg NPM_REGISTRY=$(NPM_REGISTRY) \
+                            --build-arg BUILD_ID=$(BUILD_ID) \
+                            --build-arg BUILD_VERSION=$(BUILD_VERSION) \
+                            $(DOCKER_VAULT_BUILD_FLAGS)
+
+# Detached `docker run` baseline — name, port, restart, vault, then extras.
+# Recipes append `$(image) [cmd]`.
+define DOCKER_RUN_BASE
+docker run -d \
+  --restart=unless-stopped \
+  --init \
+  $(DOCKER_LOG_RUN_FLAGS) \
+  $(DOCKER_VAULT_RUN_FLAGS) \
+  $(DOCKER_RUN_EXTRA)
+endef
+
+# ---------------------------------------------------------------------------
+# host-side install verification
+# ---------------------------------------------------------------------------
+
+.PHONY: docker-verify-install
+docker-verify-install: ## Verify the docker CLI is installed and the daemon is reachable
+	@set -euo pipefail; \
+	if ! command -v docker >/dev/null 2>&1; then \
+	  echo "FAIL: docker CLI not found in PATH" >&2; exit 127; \
+	fi; \
+	echo "docker         : $$(docker --version)"; \
+	if ! docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then \
+	  echo "FAIL: docker daemon not reachable — run 'make docker-start'" >&2; exit 1; \
+	fi; \
+	echo "docker-daemon  : $$(docker info --format '{{.ServerVersion}}')"; \
+	echo "OK: docker installed and daemon reachable"
+
+# ---------------------------------------------------------------------------
+# stage — materialize ployglots/ symlinks into a real-dir staging context
+# ---------------------------------------------------------------------------
+#
+# On branches where ployglots/<sibling>/ are symlinks (main / dev), Docker
+# rejects the COPY because the target lives outside the build context. We
+# rsync -aL the tree into .docker-stage/ so the build sees real dirs.
+# On release/* branches (real subtree dirs) the recipe is a no-op.
+#
+# What gets staged:
+#   - ployglots/  (rsync -aL: deref symlinks into real dirs)
+#   - server/     (rsync -a:  per-runtime source + per-server manifests)
+#   - .bin/docker/ (rsync -a: docker-only manifests COPY'd by both
+#                  Dockerfiles — package.json, pnpm-workspace.yaml,
+#                  .npmrc, pyproject.docker.toml. Excludes regenerate.py's
+#                  __pycache__ if present.)
+#   - Dockerfile.fastify + Dockerfile.fastapi
+#   - .dockerignore (root copy, if present)
+#
+# Excludes mirror .dockerignore so we don't drag host build artifacts in.
+
+.PHONY: docker-stage
+docker-stage: ## Stage build context at $(DOCKER_STAGE_DIR), deref'ing ployglots/ symlinks (no-op on release/*)
+ifeq ($(DOCKER_PLOYGLOTS_ARE_SYMLINKS),1)
+	@set -euo pipefail; \
+	echo "==> ployglots/ are symlinks (current branch: $$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?'))"; \
+	echo "==> staging deref'd build context at $(DOCKER_STAGE_DIR)"; \
+	mkdir -p $(DOCKER_STAGE_DIR); \
+	rsync -aL --delete \
+	  --exclude='node_modules' --exclude='.venv' --exclude='__pycache__' \
+	  --exclude='*.egg-info'    --exclude='.pytest_cache' --exclude='dist' \
+	  --exclude='.git'          --exclude='.dev'    --exclude='.prod' \
+	  --exclude='.turbo'        --exclude='.cache'  --exclude='*.log' \
+	  $(ROOT_DIR)/ployglots/ $(DOCKER_STAGE_DIR)/ployglots/ ; \
+	rsync -a --delete \
+	  --exclude='node_modules' --exclude='.venv' --exclude='__pycache__' \
+	  --exclude='*.egg-info'    --exclude='.pytest_cache' \
+	  $(ROOT_DIR)/server/ $(DOCKER_STAGE_DIR)/server/ ; \
+	rsync -a --delete \
+	  --exclude='__pycache__' --exclude='*.pyc' \
+	  $(ROOT_DIR)/.bin/docker/ $(DOCKER_STAGE_DIR)/.bin/docker/ ; \
+	cp $(ROOT_DIR)/Dockerfile.fastify $(ROOT_DIR)/Dockerfile.fastapi $(DOCKER_STAGE_DIR)/ ; \
+	if [ -f $(ROOT_DIR)/.dockerignore ]; then cp $(ROOT_DIR)/.dockerignore $(DOCKER_STAGE_DIR)/ ; fi; \
+	echo "==> staged: $$(du -sh $(DOCKER_STAGE_DIR) | cut -f1) at $(DOCKER_STAGE_DIR)"
+else
+	@echo "==> ployglots/ are real dirs (release/* branch); skipping stage"
+endif
+
+.PHONY: docker-stage-clean
+docker-stage-clean: ## Remove $(DOCKER_STAGE_DIR)
+	@rm -rf $(DOCKER_STAGE_DIR) && echo "==> removed $(DOCKER_STAGE_DIR)"
+
+# ---------------------------------------------------------------------------
+# build — per-runtime + aggregate; rebuild variants force --no-cache --pull
+# ---------------------------------------------------------------------------
+
+.PHONY: docker-build.fastify
+docker-build.fastify: $(DOCKER_STAGE_PREREQ) ## Build the fastify image (uses cache; respects VAULT_MOUNT)
+	docker build $(DOCKER_BUILD_FLAGS) \
+	  -t $(FASTIFY_IMAGE) \
+	  -f $(FASTIFY_DOCKERFILE) \
+	  $(DOCKER_BUILD_CONTEXT)
+
+# Typo-tolerant alias for muscle-memory.
+.PHONY: docker-build.fastiy
+docker-build.fastiy: docker-build.fastify ## (typo alias) → docker-build.fastify
+
+.PHONY: docker-build.fastapi
+docker-build.fastapi: $(DOCKER_STAGE_PREREQ) ## Build the fastapi image (uses cache; respects VAULT_MOUNT)
+	docker build $(DOCKER_BUILD_FLAGS) \
+	  -t $(FASTAPI_IMAGE) \
+	  -f $(FASTAPI_DOCKERFILE) \
+	  $(DOCKER_BUILD_CONTEXT)
+
+.PHONY: docker-build.servers
+docker-build.servers: docker-build.fastify docker-build.fastapi ## Build both server images
+
+.PHONY: docker-rebuild.fastify
+docker-rebuild.fastify: $(DOCKER_STAGE_PREREQ) ## Rebuild fastify from scratch (rm image, --no-cache, --pull)
+	-docker image rm $(FASTIFY_IMAGE) 2>/dev/null || true
+	docker build --no-cache --pull $(DOCKER_BUILD_FLAGS) \
+	  -t $(FASTIFY_IMAGE) \
+	  -f $(FASTIFY_DOCKERFILE) \
+	  $(DOCKER_BUILD_CONTEXT)
+
+.PHONY: docker-rebuild.fastiy
+docker-rebuild.fastiy: docker-rebuild.fastify ## (typo alias) → docker-rebuild.fastify
+
+.PHONY: docker-rebuild.fastapi
+docker-rebuild.fastapi: $(DOCKER_STAGE_PREREQ) ## Rebuild fastapi from scratch (rm image, --no-cache, --pull)
+	-docker image rm $(FASTAPI_IMAGE) 2>/dev/null || true
+	docker build --no-cache --pull $(DOCKER_BUILD_FLAGS) \
+	  -t $(FASTAPI_IMAGE) \
+	  -f $(FASTAPI_DOCKERFILE) \
+	  $(DOCKER_BUILD_CONTEXT)
+
+.PHONY: docker-rebuild.all
+docker-rebuild.all: docker-rebuild.fastify docker-rebuild.fastapi ## Rebuild both images from scratch (--no-cache --pull)
+
+# ---------------------------------------------------------------------------
+# run — detached containers; one per runtime
+# ---------------------------------------------------------------------------
+
+.PHONY: docker-run.fastify
+docker-run.fastify: ## Run fastify container detached on :$(FASTIFY_HOST_PORT) → :$(FASTIFY_CONTAINER_PORT)
+	@set -euo pipefail; \
+	if docker ps -a --format '{{.Names}}' | grep -qx '$(FASTIFY_CONTAINER)'; then \
+	  echo "==> removing pre-existing container '$(FASTIFY_CONTAINER)'"; \
+	  docker rm -f $(FASTIFY_CONTAINER) >/dev/null; \
+	fi
+	$(DOCKER_RUN_BASE) \
+	  --name $(FASTIFY_CONTAINER) \
+	  -p $(FASTIFY_HOST_PORT):$(FASTIFY_CONTAINER_PORT) \
+	  $(FASTIFY_IMAGE)
+	@echo "==> fastify running at http://127.0.0.1:$(FASTIFY_HOST_PORT)"
+
+.PHONY: docker-run.fastapi
+docker-run.fastapi: ## Run fastapi container detached on :$(FASTAPI_HOST_PORT) → :$(FASTAPI_CONTAINER_PORT)
+	@set -euo pipefail; \
+	if docker ps -a --format '{{.Names}}' | grep -qx '$(FASTAPI_CONTAINER)'; then \
+	  echo "==> removing pre-existing container '$(FASTAPI_CONTAINER)'"; \
+	  docker rm -f $(FASTAPI_CONTAINER) >/dev/null; \
+	fi
+	$(DOCKER_RUN_BASE) \
+	  --name $(FASTAPI_CONTAINER) \
+	  -p $(FASTAPI_HOST_PORT):$(FASTAPI_CONTAINER_PORT) \
+	  $(FASTAPI_IMAGE)
+	@echo "==> fastapi running at http://127.0.0.1:$(FASTAPI_HOST_PORT)"
+
+.PHONY: docker-run.all
+docker-run.all: docker-run.fastify docker-run.fastapi ## Run both containers detached
+
+# ---------------------------------------------------------------------------
+# up — build then run (one-shot per runtime)
+# ---------------------------------------------------------------------------
+
+.PHONY: docker-up.fastify
+docker-up.fastify: docker-build.fastify docker-run.fastify ## Build fastify image then run it detached
+
+.PHONY: docker-up.fastapi
+docker-up.fastapi: docker-build.fastapi docker-run.fastapi ## Build fastapi image then run it detached
+
+.PHONY: docker-up.all
+docker-up.all: docker-build.servers docker-run.all ## Build both images then run both detached
+
+# ---------------------------------------------------------------------------
+# down — stop containers (keep image)
+# ---------------------------------------------------------------------------
+
+.PHONY: docker-down.fastify
+docker-down.fastify: ## Stop the fastify container (keep image)
+	-docker stop $(FASTIFY_CONTAINER) >/dev/null 2>&1 || true
+	-docker rm $(FASTIFY_CONTAINER) >/dev/null 2>&1 || true
+
+.PHONY: docker-down.fastapi
+docker-down.fastapi: ## Stop the fastapi container (keep image)
+	-docker stop $(FASTAPI_CONTAINER) >/dev/null 2>&1 || true
+	-docker rm $(FASTAPI_CONTAINER) >/dev/null 2>&1 || true
+
+.PHONY: docker-down.all
+docker-down.all: docker-down.fastify docker-down.fastapi ## Stop both containers (keep images)
+
+# ---------------------------------------------------------------------------
+# close-port — find and stop any container publishing a host port
+# ---------------------------------------------------------------------------
+
+.PHONY: docker-close-port.fastify
+docker-close-port.fastify: ## Force-stop any container publishing :$(FASTIFY_HOST_PORT) on the host
+	@set -euo pipefail; \
+	ids=$$(docker ps --filter "publish=$(FASTIFY_HOST_PORT)" --format '{{.ID}}'); \
+	if [ -z "$$ids" ]; then \
+	  echo "==> no container publishing :$(FASTIFY_HOST_PORT)"; \
+	else \
+	  echo "==> stopping containers on :$(FASTIFY_HOST_PORT): $$ids"; \
+	  docker rm -f $$ids; \
+	fi
+
+.PHONY: docker-close-port.fastapi
+docker-close-port.fastapi: ## Force-stop any container publishing :$(FASTAPI_HOST_PORT) on the host
+	@set -euo pipefail; \
+	ids=$$(docker ps --filter "publish=$(FASTAPI_HOST_PORT)" --format '{{.ID}}'); \
+	if [ -z "$$ids" ]; then \
+	  echo "==> no container publishing :$(FASTAPI_HOST_PORT)"; \
+	else \
+	  echo "==> stopping containers on :$(FASTAPI_HOST_PORT): $$ids"; \
+	  docker rm -f $$ids; \
+	fi
+
+.PHONY: docker-close-port.all
+docker-close-port.all: docker-close-port.fastify docker-close-port.fastapi ## Force-stop any container publishing either host port
+
+# ---------------------------------------------------------------------------
+# cleanup — stop + rm container + rm image
+# ---------------------------------------------------------------------------
+
+.PHONY: docker-cleanup.fastify
+docker-cleanup.fastify: docker-down.fastify ## Stop fastify container AND remove its image
+	-docker image rm $(FASTIFY_IMAGE) 2>/dev/null || true
+
+.PHONY: docker-cleanup.fastapi
+docker-cleanup.fastapi: docker-down.fastapi ## Stop fastapi container AND remove its image
+	-docker image rm $(FASTAPI_IMAGE) 2>/dev/null || true
+
+.PHONY: docker-cleanup.all
+docker-cleanup.all: docker-cleanup.fastify docker-cleanup.fastapi ## Stop both containers AND remove both images
+
+# ---------------------------------------------------------------------------
+# restart
+# ---------------------------------------------------------------------------
+
+.PHONY: docker-restart.all
+docker-restart.all: ## Restart both containers (in-place; no rebuild)
+	-docker restart $(FASTIFY_CONTAINER) $(FASTAPI_CONTAINER)
+
+.PHONY: docker-restart
+docker-restart: docker-restart.all ## Alias for docker-restart.all
+
+.PHONY: docker-force-restart
+docker-force-restart: docker-kill docker-start ## Hard-restart the docker daemon (kill → start)
+
+# ---------------------------------------------------------------------------
+# observability — ps / logs / shell
+# ---------------------------------------------------------------------------
+
+.PHONY: docker-ps
+docker-ps: ## List running containers (mta-* only)
+	@docker ps --filter "name=mta-" --format \
+	  'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+
+.PHONY: docker-log.fastify
+docker-log.fastify: ## Tail fastify container logs (Ctrl-C to stop)
+	docker logs -f --tail=200 $(FASTIFY_CONTAINER)
+
+.PHONY: docker-log.fastapi
+docker-log.fastapi: ## Tail fastapi container logs (Ctrl-C to stop)
+	docker logs -f --tail=200 $(FASTAPI_CONTAINER)
+
+.PHONY: docker-log.all
+docker-log.all: ## Tail logs from both containers (interleaved, last 200 lines)
+	@set -euo pipefail; \
+	docker logs --tail=200 $(FASTIFY_CONTAINER) 2>&1 | sed 's/^/[fastify] /' & \
+	docker logs --tail=200 $(FASTAPI_CONTAINER) 2>&1 | sed 's/^/[fastapi] /' & \
+	wait
+
+.PHONY: docker-shell.fastify
+docker-shell.fastify: ## Open an interactive shell in the running fastify container
+	docker exec -it $(FASTIFY_CONTAINER) /bin/sh
+
+.PHONY: docker-shell.fastapi
+docker-shell.fastapi: ## Open an interactive shell in the running fastapi container
+	docker exec -it $(FASTAPI_CONTAINER) /bin/sh
+
+.PHONY: docker-image.list
+docker-image.list: ## List mta-* images on the host
+	@docker image ls --filter 'reference=mta-*' \
+	  --format 'table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}\t{{.CreatedSince}}'
+
+# ---------------------------------------------------------------------------
+# system prune (host-wide, not project-scoped — read the prompts)
+# ---------------------------------------------------------------------------
+
+.PHONY: docker-prune
+docker-prune: ## docker system prune (dangling images, stopped containers, unused networks)
+	docker system prune -f
+
+.PHONY: docker-prune-all
+docker-prune-all: ## docker system prune -a --volumes (ALSO unused images + volumes — destructive)
+	docker system prune -a --volumes -f
+
+# ---------------------------------------------------------------------------
+# daemon control — macOS Docker Desktop; override on Linux to systemctl
+# ---------------------------------------------------------------------------
+
+.PHONY: docker-start
+docker-start: ## Start the Docker daemon (macOS: open Docker Desktop; Linux: systemctl start docker)
+	@set -euo pipefail; \
+	if [ "$$(uname -s)" = "Darwin" ]; then \
+	  if docker info >/dev/null 2>&1; then \
+	    echo "==> docker daemon already running"; \
+	  else \
+	    echo "==> starting Docker Desktop ($(DOCKER_DESKTOP_APP))"; \
+	    open -a "$(DOCKER_DESKTOP_APP)"; \
+	    echo "==> waiting up to 60s for daemon to be reachable"; \
+	    for _ in $$(seq 1 30); do \
+	      if docker info >/dev/null 2>&1; then echo "==> daemon ready"; exit 0; fi; \
+	      sleep 2; \
+	    done; \
+	    echo "FAIL: daemon did not start in time" >&2; exit 1; \
+	  fi; \
+	else \
+	  sudo systemctl start docker; \
+	fi
+
+.PHONY: docker-stop
+docker-stop: ## Stop the Docker daemon (macOS: quit Docker Desktop; Linux: systemctl stop docker)
+	@set -euo pipefail; \
+	if [ "$$(uname -s)" = "Darwin" ]; then \
+	  osascript -e 'quit app "$(DOCKER_DESKTOP_APP)"' || true; \
+	  echo "==> sent quit signal to Docker Desktop"; \
+	else \
+	  sudo systemctl stop docker; \
+	fi
+
+.PHONY: docker-kill
+docker-kill: ## Force-kill the Docker daemon (macOS: pkill Docker; Linux: systemctl kill docker)
+	@set -euo pipefail; \
+	if [ "$$(uname -s)" = "Darwin" ]; then \
+	  pkill -SIGKILL -x "$(DOCKER_DESKTOP_APP)" 2>/dev/null || true; \
+	  pkill -SIGKILL -f "Docker Desktop" 2>/dev/null || true; \
+	  echo "==> killed Docker Desktop processes (best-effort)"; \
+	else \
+	  sudo systemctl kill docker; \
+	fi
+
+.PHONY: docker-status
+docker-status: ## Show daemon reachability + container summary
+	@set -euo pipefail; \
+	if docker info --format '{{.ServerVersion}}' >/dev/null 2>&1; then \
+	  echo "daemon         : up ($$(docker info --format '{{.ServerVersion}}'))"; \
+	else \
+	  echo "daemon         : DOWN (run 'make docker-start')"; \
+	  exit 0; \
+	fi; \
+	echo "containers     :"; \
+	docker ps --filter "name=mta-" --format \
+	  '  {{.Names}}\t{{.Status}}\t{{.Ports}}' || true; \
+	echo "images         :"; \
+	docker image ls --filter 'reference=mta-*' \
+	  --format '  {{.Repository}}:{{.Tag}}\t{{.Size}}' || true

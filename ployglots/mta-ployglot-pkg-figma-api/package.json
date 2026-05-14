@@ -1,0 +1,19 @@
+{
+  "name": "mta-ployglot-pkg-figma-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Polyglot Figma API workspace — @polyglot/figma-api (ts) + polyglot-figma-api (py), composed on top of @polyglot/fetch-http-client.",
+  "type": "module",
+  "workspaces": [
+    "packages/ts"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "sh -c 'npm run -w @polyglot/figma-api build'",
+    "test": "sh -c 'npm run -w @polyglot/figma-api test'",
+    "lint": "sh -c 'npm run -w @polyglot/figma-api lint'",
+    "ci": "make -C packages/ts ci"
+  }
+}

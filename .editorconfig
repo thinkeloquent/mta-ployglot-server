@@ -1,0 +1,15 @@
+# https://editorconfig.org
+#
+# Defends Makefile TAB indentation against editors that auto-convert tabs to
+# spaces on save. GNU make refuses recipe lines whose leading whitespace
+# isn't a literal TAB and fails with "missing separator. Stop." Honored by
+# VSCode (via the EditorConfig extension — widely installed), IntelliJ
+# family, Sublime, Vim/Neovim, and most other editors out of the box.
+
+root = true
+
+[{Makefile,Makefile.*,makefile,GNUmakefile,*.mk}]
+indent_style = tab
+indent_size = tab
+tab_width = 4
+trim_trailing_whitespace = false

@@ -1,0 +1,20 @@
+{
+  "name": "fetch-http-client-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Polyglot workspace root for @polyglot/fetch-http-client (TypeScript) and polyglot-fetch-http-client (Python twin at packages/py/).",
+  "workspaces": [
+    "packages/ts"
+  ],
+  "scripts": {
+    "build": "npm run build -w @polyglot/fetch-http-client",
+    "test": "npm run test -w @polyglot/fetch-http-client",
+    "lint": "npm run lint -w @polyglot/fetch-http-client",
+    "ci": "make -C packages/ts/ ci",
+    "ci:py": "make -C packages/py/ ci"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,14 @@
+[project]
+name = "mta-ployglot-api-aws-s3"
+version = "0.0.0"
+description = "Polyglot (Node + Python) API for the AWS S3 HTTPS client builder — proxy + timeouts + path-style + endpoint resolution."
+requires-python = ">=3.11,<3.12"
+
+[tool.uv.workspace]
+members = ["packages/py"]
+
+[tool.uv.sources]
+polyglot-aws-s3 = { workspace = true }
+
+[tool.uv]
+package = false

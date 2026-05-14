@@ -1,0 +1,21 @@
+# Root pyproject.toml — declares the Python-side of the polyglot workspace.
+#
+# Symmetric counterpart to the root `package.json` (which declares the Node
+# workspace under `packages/ts/`). The Python package under `packages/py/`
+# is installed via its own pyproject.toml; this file only establishes the
+# workspace so `uv sync --all-packages` produces a single root `uv.lock`.
+
+[project]
+name = "fetch-http-client-monorepo"
+version = "0.0.0"
+description = "Polyglot workspace root for @polyglot/fetch-http-client (TS) and polyglot-fetch-http-client (Python)."
+requires-python = ">=3.11,<3.12"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/py"]
+
+[tool.uv.sources]
+polyglot-fetch-http-client = { workspace = true }

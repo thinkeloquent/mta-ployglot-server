@@ -1,0 +1,3 @@
+[submodule ".changelogs"]
+	path = .changelogs
+	url = https://github.com/thinkeloquent/mta-ployglot-changelog

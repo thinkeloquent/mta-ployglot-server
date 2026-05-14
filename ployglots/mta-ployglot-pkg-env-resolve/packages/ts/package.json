@@ -1,0 +1,32 @@
+{
+  "name": "@org/env-resolve",
+  "version": "0.1.0",
+  "description": "Standardized environment variable resolution for configuration",
+  "license": "MIT",
+  "author": "MTA",
+  "keywords": ["env", "resolve", "config", "environment"],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist/", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc --noEmit",
+    "test": "node --test --import tsx 'test/**/*.test.ts'",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

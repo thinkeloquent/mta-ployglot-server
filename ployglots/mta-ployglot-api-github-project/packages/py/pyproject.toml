@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polyglot-github-projects"
+version = "0.1.0"
+description = "Python placeholder for the polyglot GitHub Projects v2 API. See @mta/github-projects for the functional Node implementation."
+requires-python = ">=3.11,<3.12"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "mta" }]
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Programming Language :: Python :: 3.11",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["polyglot_github_projects*"]

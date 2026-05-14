@@ -1,0 +1,34 @@
+# .dockerignore — root fallback (used when a per-Dockerfile ignore is absent).
+# Mirrors server/<svc>/.dockerignore baseline, minus sibling-service exclusion.
+
+.git
+.gitmodules
+.gitignore
+.github
+.claude
+.agent
+.agents
+.Agent.md
+.agent.md
+.agent.json
+*.md
+LICENSE
+
+.vscode
+.idea
+*.swp
+**/.DS_Store
+
+**/*.log
+.smoke-logs
+**/.cache
+**/.nx
+
+**/__pycache__
+**/.venv
+**/*.egg-info
+**/.pytest_cache
+
+**/node_modules
+**/dist
+**/.turbo

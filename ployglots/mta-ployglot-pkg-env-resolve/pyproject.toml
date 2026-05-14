@@ -1,0 +1,9 @@
+# Root marker file — Python has no native workspace concept.
+# The real Python package is at packages/py/.
+
+[tool.env-resolve]
+description = "Polyglot env-resolve — TypeScript + Python twin packages"
+python-package-root = "packages/py"
+typescript-package-root = "packages/ts"
+spec = "SPEC.md"
+parity-fixtures = "tests/parity/fixtures.json"

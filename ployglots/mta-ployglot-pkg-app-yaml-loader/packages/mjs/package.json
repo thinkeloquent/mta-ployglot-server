@@ -1,0 +1,22 @@
+{
+  "name": "@ployglot/app-yaml-loader",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": [
+    "src/",
+    "README.md"
+  ],
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "scripts": {
+    "test": "node --test __tests__"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

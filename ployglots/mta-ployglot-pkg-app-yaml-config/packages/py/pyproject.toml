@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "app_yaml_config"
+version = "0.1.0"
+requires-python = ">=3.11,<3.12"
+dependencies = []
+
+[project.optional-dependencies]
+loader = ["app_yaml_loader>=0.1.0"]
+dev = ["pytest>=7", "build>=1.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/app_yaml_config"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

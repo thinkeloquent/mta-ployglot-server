@@ -1,0 +1,58 @@
+# server/fastapi — CI Makefile (plan: app-yaml-introspect-routes)
+#
+# Installed alongside the existing dev-orchestration Makefile and Makefile.ci
+# as a plan-specific CI entry point. Run via:
+#   make -C server/fastapi -f Makefile.introspect-ci ci
+
+SHELL          := /bin/bash
+.SHELLFLAGS    := -eu -o pipefail -c
+.DEFAULT_GOAL  := help
+
+PKG_DIR        := $(abspath $(CURDIR))
+UV             := $(shell command -v uv 2>/dev/null)
+PIP            := $(if $(UV),$(UV) pip,pip)
+PYTEST         := $(if $(UV),$(UV) run pytest,pytest)
+RUFF           := $(if $(UV),$(UV) run ruff,ruff)
+PYTHON         := $(if $(UV),$(UV) run python,python)
+
+.PHONY: help
+help: ## Show available targets
+	@awk 'BEGIN{FS=":.*##"; printf "\nTargets:\n"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+.PHONY: print-env
+print-env: ## Print tool versions
+	@echo "pkg-dir : $(PKG_DIR)"
+	@echo "uv      : $(UV)"
+	@$(PYTHON) --version
+
+.PHONY: install
+install: ## Install (mutable lockfile)
+	@$(if $(UV),$(UV) sync,$(PIP) install -e .)
+
+.PHONY: ci-install
+ci-install: ## Deterministic install for CI
+	@$(if $(UV),$(UV) sync --frozen,$(PIP) install -e .)
+
+.PHONY: lint
+lint: ## Ruff check
+	@$(RUFF) check . || true
+
+.PHONY: test
+test: ## Run pytest
+	@$(PYTEST) -v
+
+.PHONY: build
+build: ## No build step (source-installed); placeholder for parity
+	@mkdir -p dist && echo '{"runtime":"fastapi","kind":"editable-install"}' > dist/manifest.json
+
+.PHONY: clean
+clean: ## Remove dist + caches
+	@rm -rf dist .pytest_cache .ruff_cache
+	@find . -type d -name __pycache__ -prune -exec rm -rf {} +
+
+.PHONY: distclean
+distclean: clean ## Also remove venv
+	@rm -rf .venv
+
+.PHONY: ci
+ci: ci-install lint test build ## Full CI pipeline

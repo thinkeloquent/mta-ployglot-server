@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    name: build (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-store-${{ runner.os }}-node${{ matrix.node }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-node${{ matrix.node }}-
+
+      - name: Cache tsup build cache
+        uses: actions/cache@v4
+        with:
+          path: packages/ts/node_modules/.cache/tsup
+          key: tsup-${{ runner.os }}-node${{ matrix.node }}-${{ hashFiles('packages/ts/src/**/*.ts') }}
+          restore-keys: |
+            tsup-${{ runner.os }}-node${{ matrix.node }}-
+
+      - name: Run CI
+        run: make -C packages/ts ci
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-node${{ matrix.node }}
+          path: packages/ts/coverage/
+          if-no-files-found: ignore

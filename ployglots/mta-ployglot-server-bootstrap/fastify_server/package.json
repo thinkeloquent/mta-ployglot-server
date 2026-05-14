@@ -1,0 +1,76 @@
+{
+  "name": "@ployglot/fastify-server",
+  "version": "0.1.0",
+  "description": "Runtime-neutral polyglot bootstrap orchestrator for Fastify with built-in env/lifecycle/route addons.",
+  "license": "MIT",
+  "author": "Think Eloquent",
+  "keywords": [
+    "fastify",
+    "bootstrap",
+    "orchestrator",
+    "polyglot",
+    "plugin-system",
+    "addon"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/org/mta-server-root-fastify.git",
+    "directory": "fastify_server"
+  },
+  "bugs": {
+    "url": "https://github.com/org/mta-server-root-fastify/issues"
+  },
+  "homepage": "https://github.com/org/mta-server-root-fastify/tree/main/fastify_server#readme",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./adapters/fastify": {
+      "types": "./dist/adapters/fastify.adapter.d.ts",
+      "import": "./dist/adapters/fastify.adapter.js"
+    },
+    "./addons/environment": {
+      "types": "./dist/addons/environment.addon.d.ts",
+      "import": "./dist/addons/environment.addon.js"
+    },
+    "./addons/lifecycle": {
+      "types": "./dist/addons/lifecycle.addon.d.ts",
+      "import": "./dist/addons/lifecycle.addon.js"
+    },
+    "./addons/route": {
+      "types": "./dist/addons/route.addon.d.ts",
+      "import": "./dist/addons/route.addon.js"
+    },
+    "./contracts/*.json": "./contracts/*.json"
+  },
+  "files": [
+    "dist",
+    "contracts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p .",
+    "clean": "rm -rf dist",
+    "test": "node --test --import tsx test/*.test.ts",
+    "start": "node examples/quickstart/main.mjs",
+    "dev": "node --watch examples/quickstart/main.mjs"
+  },
+  "dependencies": {
+    "close-with-grace": "^2.1.0",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "pino-pretty": "^13.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

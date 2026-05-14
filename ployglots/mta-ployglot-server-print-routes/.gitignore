@@ -1,0 +1,28 @@
+# Node
+node_modules/
+dist/
+.nyc_output/
+coverage/
+npm-debug.log*
+
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+build/
+
+# Tooling
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Lockfiles kept:
+# - package-lock.json and uv.lock MUST be committed (they pin the
+#   workspace)
+
+# Local symlink to mta-ployglot-agentfiles-claude (formerly a submodule)
+.claude

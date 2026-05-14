@@ -1,0 +1,19 @@
+{
+  "name": "@mta/github-projects",
+  "version": "0.1.0",
+  "description": "GitHub Projects v2 API client with custom HOST and proxy support.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "files": ["src/"],
+  "scripts": {
+    "test": "node --test 'test/**/*.test.mjs'"
+  },
+  "dependencies": {
+    "undici": "^6.19.0"
+  },
+  "license": "MIT"
+}

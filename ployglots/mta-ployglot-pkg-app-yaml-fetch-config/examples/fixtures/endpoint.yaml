@@ -1,0 +1,21 @@
+endpoints:
+  llm001:
+    name: Gemini
+    tags: [llm, fast]
+    baseUrl: https://api.example.com/v1/chat
+    method: POST
+    headers:
+      Authorization: Bearer XYZ
+    timeout: 8000
+    bodyType: json
+  llm002:
+    name: OpenAI
+    tags: [llm, slow]
+    baseUrl: https://api.alt.com/v1/chat
+    method: POST
+    timeout: 12000
+intent_mapping:
+  default_intent: llm001
+  mappings:
+    storybook: llm002
+    summary: llm001

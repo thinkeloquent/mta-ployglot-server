@@ -1,0 +1,17 @@
+{
+  "name": "mta-ployglot-server-print-routes",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Polyglot extraction of the FastAPI + Fastify route-listing helpers.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/mjs",
+    "examples/fastify-app"
+  ],
+  "scripts": {
+    "test": "sh -c 'npm test --workspaces --if-present'"
+  }
+}

@@ -1,0 +1,11 @@
+[project]
+name = "mta-ployglot-api-github-project"
+version = "0.0.0"
+description = "Polyglot (Node, Python-stub) API for GitHub Projects v2 with custom HOST and proxy support."
+requires-python = ">=3.11,<3.12"
+
+[tool.uv.workspace]
+members = ["packages/py"]
+
+[tool.uv]
+package = false

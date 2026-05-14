@@ -1,0 +1,281 @@
+name: Release (merge + subtree assemble)
+
+# Manual workflow — operator-triggered from the Actions UI.
+#
+#   1. Merge $source (default: main) into $target (default: release/main).
+#      Creates $target from $source on first run.
+#   2. For every entry in workspace.toml, run `git subtree add|pull --squash
+#      --prefix=<subtree_prefix>` so the release branch is a self-contained
+#      tree of every sibling at its current HEAD SHA.
+#   3. Push the assembled release branch back to origin.
+#
+# Replaces the previous push/PR-driven release-preflight + release-assemble
+# pair. Gates that used to run as preflight (vault-check, twin-diff, etc.) can
+# still be invoked locally via `make pre-push`.
+#
+# To run: Actions → "Release (merge + subtree assemble)" → Run workflow.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source branch to merge from'
+        required: true
+        default: 'main'
+      target:
+        description: 'Release branch to assemble onto (created from source if missing)'
+        required: true
+        default: 'release/main'
+
+permissions:
+  contents: write   # push the merge + subtree commits to the release branch
+
+# Serialize same-target assemblies (don't kill in flight). Different release
+# targets run in parallel. On push, inputs.target is empty — fall back to the
+# default release branch so concurrent main pushes serialize on the same group.
+concurrency:
+  group: release-${{ inputs.target || 'release/main' }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # Push-triggered runs have empty inputs.*; fall back to the same defaults
+      # the workflow_dispatch form advertises so the steps below behave
+      # identically regardless of trigger.
+      SOURCE_REF: ${{ inputs.source || 'main' }}
+      RELEASE_REF: ${{ inputs.target || 'release/main' }}
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Skip submodules: .claude is a private repo of dev-only Claude
+          # Code agent files; the build does not use it.
+          submodules: false
+          # GH_RELEASE_TOKEN is a fine-grained PAT with `contents: read` on
+          # every workspace.toml sibling and `contents: write` on this repo.
+          # GITHUB_TOKEN can't be used because it's scoped to the source repo
+          # only and the org plan doesn't expose the "allow internal repo
+          # access" toggle.
+          token: ${{ secrets.GH_RELEASE_TOKEN }}
+
+      - name: Configure git author
+        run: |
+          git config user.name  "release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+
+      - name: Configure git auth for sibling subtree clones
+        # `git subtree add|pull` clones each https://github.com/thinkeloquent/<sibling>
+        # under the hood; bootstrap.sh also runs `git ls-remote` per sibling
+        # before clone. This insteadOf rule routes every github.com HTTPS
+        # access through GH_RELEASE_TOKEN so the internal-org siblings resolve.
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GH_RELEASE_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Setup Python (for workspace tooling)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install check-jsonschema
+        # bootstrap.sh -> scripts/workspace/validate.sh validates workspace.toml
+        # against its JSON schema; without this, validate.sh exits 127.
+        run: |
+          pipx install check-jsonschema
+          check-jsonschema --version
+
+      - name: Reset $RELEASE_REF to $SOURCE_REF
+        # release/<X> is throwaway — start fresh from $SOURCE_REF every run.
+        # Whatever was on origin/release/<X> is irrelevant; the orphan-commit
+        # step at the end discards all parent history anyway.
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$SOURCE_REF"
+          git checkout -B "$RELEASE_REF" "origin/$SOURCE_REF"
+
+      - name: Strip ployglots/ symlinks (so subtree-add has empty prefixes)
+        # main commits every sibling as a symlink at ployglots/<name>; after
+        # the merge above those symlinks live on release/<X> too. git subtree
+        # add refuses to write into an occupied prefix, so we git-rm the
+        # tracked symlinks (and rm the working-tree ones) and record a
+        # single "strip" commit before assembly.
+        run: |
+          set -euo pipefail
+          mapfile -t prefixes < <(awk -F= '/^[[:space:]]*shell_path[[:space:]]*=/ { gsub(/[" ]/, "", $2); print $2 }' workspace.toml)
+          for p in "${prefixes[@]}"; do
+            if git ls-files --error-unmatch -- "$p" >/dev/null 2>&1; then
+              git rm -rf --quiet -- "$p"
+            elif [[ -L "$p" || -e "$p" ]]; then
+              rm -rf -- "$p"
+            fi
+          done
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): strip sibling symlinks before subtree assembly"
+          fi
+
+      - name: Subtree assemble — git subtree add --squash for every entry
+        # subtree-assemble.sh is the inverse of bootstrap: walks workspace.toml
+        # and runs `git subtree add --prefix=<shell_path> <remote> <default_ref>
+        # --squash` per entry. Replaces each (now-removed) symlink with a real
+        # squashed subtree directory.
+        run: ./scripts/workspace/subtree-assemble.sh assemble "$RELEASE_REF"
+
+      - name: Strip .claude/ from root and every subtree
+        # The orchestration repo carries a .claude submodule and each sibling
+        # carries its own .claude/ folder; both are Claude Code agent configs,
+        # i.e. dev tooling that shouldn't ship in the release artifact. Drop
+        # them all in one follow-up commit. .gitmodules is also stripped so
+        # consumers of release/* don't see a phantom submodule reference.
+        run: |
+          set -euo pipefail
+          mapfile -t prefixes < <(awk -F= '/^[[:space:]]*shell_path[[:space:]]*=/ { gsub(/[" ]/, "", $2); print $2 }' workspace.toml)
+          # Per-subtree .claude/
+          for p in "${prefixes[@]}"; do
+            if [[ -e "$p/.claude" ]]; then
+              git rm -rf --quiet -- "$p/.claude"
+            fi
+          done
+          # Root .claude (submodule) + .gitmodules.
+          if git ls-files --error-unmatch -- .claude >/dev/null 2>&1; then
+            git rm -rf --quiet -- .claude
+          elif [[ -e .claude || -L .claude ]]; then
+            rm -rf -- .claude
+          fi
+          if [[ -f .gitmodules ]]; then
+            git rm -f --quiet -- .gitmodules
+          fi
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): strip .claude/ from root and each subtree"
+          fi
+
+      - name: Run workspace.sync (policy checks + auto-fixes)
+        # Consolidates every release-side gate that is NOT subtree / orphan-
+        # collapse plumbing. See Makefile.workspace — the same target a
+        # developer runs locally to reproduce CI gates before opening a PR.
+        # Bundled gates (in order):
+        #   1. fix-pnpm-build-forwarding.py --apply — wraps pnpm/npm wrapper
+        #      scripts in `sh -c '...'` so a caller's trailing `--if-present`
+        #      never reaches the inner `tsc`.
+        #   2. check-no-hardcoded-registry.sh — refuses literal registry URLs
+        #      (npmjs/pypi/Verdaccio allowlisted).
+        #   3. check-python-pins.py — validates every pyproject/requirements
+        #      against .bin/python-pins.toml (the agent-side SSOT).
+        #   4. release-preflight.sh — license format + TOML parse + bootstrap
+        #      re-emit against the assembled tree. Last gate before history
+        #      flattens; failures after orphan-collapse cost a full re-run.
+        # Mutations from gate (1) are committed in a single follow-up commit
+        # below; the other three gates are read-only.
+        run: |
+          set -euo pipefail
+          make workspace.sync
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "chore(release): apply workspace.sync auto-fixes"
+          fi
+
+      - name: Regenerate .bin/docker/* from per-server manifests
+        # The four files under .bin/docker/ — pnpm-workspace.yaml, package.json,
+        # .npmrc, pyproject.toml — are the manifests Dockerfile.fastify and
+        # Dockerfile.fastapi COPY into /application/ during the cloud build.
+        # Their content is derived from server/fastify/package.json and
+        # server/fastapi/pyproject.toml (the editable SSOTs).
+        #
+        # A contributor who adds or removes a sibling dep on main could forget
+        # to keep .bin/docker/* in sync. To prevent a stale committed copy
+        # from breaking the release Docker build, regenerate the four files
+        # here and commit any diff before orphan-collapse. The step is a
+        # no-op when main is already up-to-date; self-healing when it isn't.
+        #
+        # Runs after workspace.sync so any auto-fix that mutates a per-server
+        # manifest (gate #1) is already on disk and feeds into the regen.
+        run: |
+          set -euo pipefail
+          python .bin/docker/regenerate.py --apply
+          if ! git diff --quiet -- .bin/docker/; then
+            git add .bin/docker/
+            git commit -m "chore(release): regenerate .bin/docker/* from per-server manifests"
+          fi
+
+      - name: Regenerate .bin/docker/path.sh from ployglots/ module layout
+        # Walks ployglots/<sibling>/**/{pyproject.toml,package.json} (now real
+        # directories after subtree-assemble) and emits .bin/docker/path.sh
+        # with PYTHONPATH (Python module roots, src-layout aware) + PATH
+        # (Node node_modules/.bin dirs). Companion to Dockerfile.fastapi:99-104,
+        # which smoke-checks `pip list --editable` for the venv side; this
+        # step is the inverse — a static, on-disk inventory of every module
+        # location, valid even for tools invoked outside the venv. Idempotent;
+        # commit-on-diff mirrors the per-server-manifest regen above.
+        run: |
+          set -euo pipefail
+          ./scripts/workspace/generate-docker-path.sh
+          if ! git diff --quiet -- .bin/docker/path.sh; then
+            git add .bin/docker/path.sh
+            git commit -m "chore(release): regenerate .bin/docker/path.sh from ployglots/ module layout"
+          fi
+
+      - name: Regenerate .bin/docker/validate-{python,node}.sh
+        # Emits the per-runtime sibling validators that each Dockerfile
+        # COPY+RUNs. The Python list is derived from .bin/docker/
+        # pyproject.docker.toml's path-deps; the Node list from
+        # .bin/docker/pnpm-workspace.yaml's `ployglots/...` members (their
+        # package.json `name` fields). Replaces the count-based
+        # `pip list --editable | wc -l` check in Dockerfile.fastapi with
+        # a per-name `pip show` that reports exactly which sibling went
+        # missing. Idempotent; commit-on-diff mirrors the path.sh step.
+        run: |
+          set -euo pipefail
+          ./scripts/workspace/generate-package-validate.sh
+          if ! git diff --quiet -- .bin/docker/validate-python.sh .bin/docker/validate-node.sh; then
+            git add .bin/docker/validate-python.sh .bin/docker/validate-node.sh
+            git commit -m "chore(release): regenerate .bin/docker/validate-{python,node}.sh"
+          fi
+
+      - name: Prepend // @ts-nocheck to every TypeScript source file
+        # Bulk-disable strict TypeScript checking across the assembled release
+        # tree before orphan-collapse. The Dockerfile.fastify build runs
+        # `tsc -p .` in three sibling packages (fastify_server, env-resolve,
+        # fetch-client); marking each .ts/.tsx as `// @ts-nocheck` lets those
+        # builds emit JS even if a sibling has unresolved type errors at the
+        # pinned SHA. The marker is idempotent — re-runs skip files that
+        # already start with it — and .d.ts files are deliberately left alone.
+        #
+        # Scoped to the whole working tree because subtree-assemble materialized
+        # every sibling as a real directory under ployglots/<name>/ on this
+        # branch; the script's built-in skip list covers node_modules/dist/etc.
+        run: |
+          set -euo pipefail
+          python .bin/ts-nocheck-add.py .
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "chore(release): add // @ts-nocheck to TypeScript sources"
+          fi
+
+      - name: Collapse to a parent-less orphan commit
+        # release/<X> is rebuilt from scratch every run with no shared
+        # history. Take the assembled working tree, wrap it as a parent-less
+        # commit, point release/<X> at it, and force-push. Result: release/<X>
+        # is always exactly one commit deep and contains main + assembled
+        # subtrees with .claude/ stripped. No merge-history bookkeeping.
+        run: |
+          set -euo pipefail
+          tree=$(git rev-parse HEAD^{tree})
+          orphan=$(git commit-tree "$tree" \
+            -m "release: assemble $RELEASE_REF from $SOURCE_REF (run #${{ github.run_number }})")
+          git update-ref "refs/heads/$RELEASE_REF" "$orphan"
+          git checkout "$RELEASE_REF"
+
+      - name: Push release branch (force)
+        # release/<X> is throwaway — every run rewrites it. --force-with-lease
+        # would refuse if someone else pushed in between; we deliberately
+        # use --force because the workflow is the sole writer of release/<X>.
+        run: git push --force origin "HEAD:$RELEASE_REF"

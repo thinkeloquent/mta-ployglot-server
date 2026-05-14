@@ -1,0 +1,12 @@
+{
+  "name": "mta-ployglot-pkg-app-yaml-loader",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/mjs"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

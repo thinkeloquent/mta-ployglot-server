@@ -1,0 +1,9 @@
+{
+  "name": "@ployglot/app-yaml-fetch-config",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": { ".": "./src/index.mjs" },
+  "dependencies": { "js-yaml": "^4.1.0" },
+  "scripts": { "test": "node --test '__tests__/**/*.test.mjs'" }
+}

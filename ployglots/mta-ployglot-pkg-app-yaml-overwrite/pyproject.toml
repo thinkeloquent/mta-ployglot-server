@@ -1,0 +1,15 @@
+# Root marker file — uv workspace for the two Python twin packages.
+# The published Python packages live at packages/engine-py/ and packages/applier-py/.
+
+[tool.uv.workspace]
+members = ["packages/engine-py", "packages/applier-py"]
+
+[tool.uv]
+package = false
+dev-dependencies = ["pytest>=8.0.0"]
+
+[tool.uv.sources]
+# Sibling polyglot package — env-resolve. Imported by the engine for {{env.VAR}}.
+env-resolve = { path = "../mta-ployglot-pkg-env-resolve/packages/py", editable = true }
+# Inter-twin dep — applier-py depends on engine-py within this same workspace.
+runtime-template-resolver = { workspace = true }

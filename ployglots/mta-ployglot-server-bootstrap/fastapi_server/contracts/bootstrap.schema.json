@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polyglot.local/bootstrap.schema.json",
+  "title": "BootstrapConfig",
+  "description": "The canonical runtime-agnostic bootstrap configuration shared across Fastify and FastAPI adapters.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "title": { "type": "string" },
+    "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
+    "host": { "type": "string" },
+    "profile": { "type": "string" },
+    "logger": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["trace", "debug", "info", "warn", "error", "fatal", "silent"]
+        },
+        "json_format": { "type": "boolean" }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "environment": { "$ref": "#/$defs/stringOrArray" },
+        "lifecycles":  { "$ref": "#/$defs/stringOrArray" },
+        "routes":      { "$ref": "#/$defs/stringOrArray" },
+        "apps":        { "$ref": "#/$defs/stringOrArray" }
+      }
+    },
+    "initial_state": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "stringOrArray": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    }
+  }
+}

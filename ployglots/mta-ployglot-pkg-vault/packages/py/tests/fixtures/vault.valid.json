@@ -1,0 +1,11 @@
+{
+  "header": {
+    "version": "1.0.0",
+    "createdAt": "2026-04-24T00:00:00.000Z",
+    "description": "parity test fixture"
+  },
+  "secrets": {
+    "SHARED": "file-value",
+    "FILE_ONLY": "only-in-file"
+  }
+}

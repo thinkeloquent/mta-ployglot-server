@@ -1,0 +1,24 @@
+{
+  "api_key": null,
+  "providers": {
+    "gemini": {
+      "timeout": 1000,
+      "overwrite_from_context": {
+        "timeout": "{{env.GEMINI_TIMEOUT | \"5000\"}}"
+      }
+    }
+  },
+  "services": {
+    "x": {
+      "url": "placeholder",
+      "deprecated_field": "remove-me",
+      "overwrite_from_context": {
+        "url": "{{request.host}}",
+        "deprecated_field": null
+      }
+    }
+  },
+  "overwrite_from_env": {
+    "api_key": "TEST_KEY"
+  }
+}

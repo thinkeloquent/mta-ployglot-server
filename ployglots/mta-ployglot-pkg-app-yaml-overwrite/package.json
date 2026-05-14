@@ -1,0 +1,19 @@
+{
+  "name": "app-yaml-overwrite-polyglot",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Polyglot app-yaml-overwrite — engine (runtime-template-resolver) + applier (app-yaml-from-context), mjs + py twins.",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/engine-mjs",
+    "packages/applier-mjs"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "sh -c 'npm test --workspaces --if-present'",
+    "build": "sh -c 'npm run build --workspaces --if-present'"
+  }
+}

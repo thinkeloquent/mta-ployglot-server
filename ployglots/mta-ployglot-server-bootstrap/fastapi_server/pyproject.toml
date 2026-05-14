@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "thinkeloquent-fastapi-server"
+version = "0.1.0"
+description = "Runtime-neutral polyglot bootstrap orchestrator for FastAPI with built-in env/lifecycle/route addons."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.12"
+authors = [{ name = "Think Eloquent" }]
+keywords = ["fastapi", "bootstrap", "orchestrator", "plugin-system", "asgi", "polyglot"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Framework :: FastAPI",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+dependencies = [
+  "fastapi==0.128.0",
+  "uvicorn[standard]==0.40.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "httpx[http2]>=0.28.1",
+  "build>=1.2",
+  "twine>=5",
+]
+
+[project.urls]
+Homepage = "https://github.com/org/mta-server-root-fastify"
+Repository = "https://github.com/org/mta-server-root-fastify"
+Issues = "https://github.com/org/mta-server-root-fastify/issues"
+
+[project.scripts]
+fastapi-server = "fastapi_server.cli:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["fastapi_server"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"contracts" = "fastapi_server/contracts"
+
+[tool.hatch.build.targets.sdist]
+include = ["fastapi_server", "contracts", "README.md", "LICENSE", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

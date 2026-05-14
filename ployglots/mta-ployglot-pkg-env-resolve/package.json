@@ -1,0 +1,14 @@
+{
+  "name": "env-resolve-polyglot",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Polyglot env-resolve — TypeScript + Python twin packages",
+  "license": "MIT",
+  "workspaces": [
+    "packages/ts"
+  ],
+  "scripts": {
+    "test": "sh -c 'npm test --workspaces --if-present'",
+    "build": "sh -c 'npm run build --workspaces --if-present'"
+  }
+}

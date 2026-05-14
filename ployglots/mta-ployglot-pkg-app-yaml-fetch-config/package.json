@@ -1,0 +1,16 @@
+{
+  "name": "mta-ployglot-pkg-app-yaml-fetch-config",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Polyglot package: turn YAML endpoint config into HTTP fetch ARGS.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/mjs"
+  ],
+  "scripts": {
+    "test": "sh -c 'npm test --workspaces --if-present'"
+  }
+}

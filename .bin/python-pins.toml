@@ -1,0 +1,106 @@
+# python-pins.toml — single source of truth for Python project dependency pins.
+#
+# Lives at .bin/python-pins.toml so it's reachable in every context this repo
+# runs in: dev (sibling layout), CI (.github/workflows/release.yml runs after
+# .claude is stripped), and any consumer that adopts the same pattern.
+#
+# Consumed by:
+#   - .bin/check-python-pins.py  (CI gate — runs in release.yml against every
+#     pyproject.toml / requirements.txt in the assembled tree)
+#   - skills/python-pin-pkg-version/SKILL.md  (agent-side enforcement — Claude
+#     reads this file before editing any Python project config; the skill ships
+#     with mta-ployglot-agentfiles-claude and points back here)
+#   - CLAUDE.md  (human reference — points here instead of embedding the list,
+#     so the prose and the machine-readable form never drift)
+#
+# Rules:
+#   1. A package not in [pins] is unconstrained — pick a sensible specifier.
+#   2. A package in [pins] MUST use exactly the specifier shown when added or
+#      upgraded in any project's pyproject.toml / requirements.txt. Don't pick
+#      a newer minor, don't substitute caret (^) for ==, don't broaden the
+#      range. Drift here is the failure mode this file exists to prevent.
+#   3. Don't pre-add packages to a project just because they're listed here.
+#      The list is "apply on use", not a manifest. A package must already be
+#      imported by the project before it earns a pyproject entry.
+#   4. When a pin needs to move (CVE, upstream-only fix), update this file
+#      AND every project that already depends on the package, in the same PR.
+#
+# Format notes:
+#   - [pins] is a flat <name> = "<specifier>" table. Specifier follows PEP 440
+#     (==X.Y.Z, >=X,<Y, etc.). Bare versions (no operator) follow Poetry's
+#     caret semantics — see [poetry-caret-equivalents] below for explicit
+#     PEP 440 forms consumers in non-Poetry projects must use.
+#   - [extras] maps <name> -> array of extras. When the package appears in
+#     a Poetry table, write `pkg = {extras = [...], version = "<spec>"}`.
+#     For PEP 621 / requirements.txt, write `pkg[extra1,extra2]<spec>`.
+
+[meta]
+python-version = ">=3.11,<3.12"
+# Matches `.python-version` (3.11.4) and the `requires-python` pin every
+# sibling pyproject inherits. Don't widen this without a coordinated bump
+# across every sibling repo and the workspace docker base images.
+
+[pins]
+fastapi                  = "==0.128.0"
+uvicorn                  = "==0.40.0"
+pydantic                 = "==2.12.5"
+pydantic-settings        = "==2.12.0"
+python-dotenv            = "==1.2.1"
+python-multipart         = "==0.0.21"
+pyyaml                   = "==6.0.3"
+aiohttp                  = "==3.13.3"
+deepmerge                = "==2.0"
+sqlalchemy               = "==2.0.22"
+greenlet                 = "==3.3.1"
+asyncpg                  = "==0.31.0"
+psycopg2-binary          = "==2.9.11"
+alembic                  = "==1.18.1"
+redis                    = "==7.1.0"
+elasticsearch            = ">=8.0.0,<9.0.0"
+aiofiles                 = "==25.1.0"
+urllib3                  = "==2.6.3"
+aiobotocore              = "==3.1.1"
+unstructured             = ">=0.16.0"
+langchain                = ">=1.0.2,<=1.2.10"
+langchain-community      = "==0.4.1"
+langgraph                = ">=1.0.1,<=1.0.8"
+langchain-text-splitters = "1.1.0"
+langchain-chroma         = ">=1.0.0"
+langchain-openai         = ">=1.0.0"
+nltk                     = ">=3.8.0"
+rank-bm25                = ">=0.2.0"
+numpy                    = ">=1.24.0"
+numba                    = "==0.63.1"
+markdown                 = ">=3.5.0"
+openai                   = ">=1.0.0"
+pypdfium2                = "==5.4.0"
+fsspec                   = "==2026.2.0"
+httpx                    = ">=0.28.1"
+typing-extensions        = ">=4.0.0"
+click                    = ">=8.1.0"
+rich                     = ">=13.0.0"
+typer                    = ">=0.9.0"
+jinja2                   = ">=3.1.0"
+python-liquid            = ">=1.0.0"
+chromadb                 = "1.5.0"
+langchain_classic        = "1.0.1"
+
+[extras]
+# Packages that MUST be installed with extras in this workspace. Consumers
+# that omit the extras silently lose features (uvicorn[standard] gives the
+# httptools / websockets / watchfiles cluster; sqlalchemy[asyncio] flips
+# the dialect to async; aiobotocore[boto3] pulls in boto3-compatible types;
+# httpx[http2] enables HTTP/2 transport).
+uvicorn     = ["standard"]
+sqlalchemy  = ["asyncio"]
+aiobotocore = ["boto3"]
+httpx       = ["http2"]
+
+[poetry-caret-equivalents]
+# Bare version strings in [pins] follow Poetry's caret-by-default semantics.
+# Non-Poetry consumers (PEP 621 [project] dependencies, requirements.txt,
+# setup.cfg) MUST translate to the explicit PEP 440 form below. The CI gate
+# treats both forms as equivalent.
+"langchain-text-splitters" = ">=1.1.0,<2.0.0"
+chromadb                   = ">=1.5.0,<2.0.0"
+langchain_classic          = ">=1.0.1,<2.0.0"

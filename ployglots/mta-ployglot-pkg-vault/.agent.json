@@ -1,0 +1,36 @@
+{
+  "schema": "ployglot-agentmd-usages/v1",
+  "generated_at": "2026-04-24T00:00:00Z",
+  "repo": "mta-ployglot-pkg-vault-file",
+  "layout": "packages/<language>/ (one package per language)",
+  "languages": ["ts", "py"],
+  "packages": [
+    {
+      "key": "vault-file",
+      "language": "ts",
+      "path": "packages/ts",
+      "agent_md": "packages/ts/.agent.md",
+      "install": "npm i @polyglot/vault-file",
+      "manifest_name": "@polyglot/vault-file",
+      "manifest_version": "1.0.0",
+      "twin_of": { "key": "vault-file", "language": "py" },
+      "stale": false
+    },
+    {
+      "key": "vault-file",
+      "language": "py",
+      "path": "packages/py",
+      "agent_md": "packages/py/.agent.md",
+      "install": "pip install polyglot-vault-file",
+      "manifest_name": "polyglot-vault-file",
+      "manifest_version": "1.0.0",
+      "twin_of": { "key": "vault-file", "language": "ts" },
+      "stale": false
+    }
+  ],
+  "unclassified": [],
+  "stale_files": [],
+  "cross_cutting": [
+    ".agents/parity.md"
+  ]
+}

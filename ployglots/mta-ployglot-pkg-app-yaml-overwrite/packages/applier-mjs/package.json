@@ -1,0 +1,21 @@
+{
+  "name": "@ployglot/app-yaml-from-context",
+  "version": "0.1.0",
+  "description": "Applier — walks a config tree and resolves overwrite_from_context / overwrite_from_env sections.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "files": ["src/", "README.md"],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@ployglot/runtime-template-resolver": "^0.1.0"
+  },
+  "scripts": {
+    "test": "node --test '__tests__/**/*.test.mjs'"
+  }
+}

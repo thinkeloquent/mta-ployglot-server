@@ -1,0 +1,23 @@
+{
+  "name": "@mta/print-routes-fastify",
+  "version": "0.1.0",
+  "description": "Print registered Fastify routes in a flat table format. Uses an onRoute hook to capture URL → method set at registration time.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./print-routes": "./src/print-routes.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "files": ["src/"],
+  "scripts": {
+    "test": "node --test 'test/**/*.test.mjs'"
+  },
+  "peerDependencies": {
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "fastify": "^5.0.0"
+  },
+  "license": "MIT"
+}

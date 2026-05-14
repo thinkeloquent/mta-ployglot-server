@@ -1,0 +1,14 @@
+{
+  "name": "example-fastify-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Minimal Fastify app demonstrating @mta/print-routes-fastify.",
+  "scripts": {
+    "start": "node src/main.mjs"
+  },
+  "dependencies": {
+    "@mta/print-routes-fastify": "*",
+    "fastify": "^5.0.0"
+  }
+}

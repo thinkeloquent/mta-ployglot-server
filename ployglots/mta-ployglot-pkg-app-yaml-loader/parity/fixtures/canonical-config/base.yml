@@ -1,0 +1,3 @@
+global:
+  service: app-yaml-loader
+  layer: base

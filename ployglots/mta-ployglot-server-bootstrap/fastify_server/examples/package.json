@@ -1,0 +1,20 @@
+{
+  "name": "fastify-server-examples",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runnable examples for fastify-server.",
+  "type": "module",
+  "scripts": {
+    "start": "node quickstart/main.mjs",
+    "dev": "node --watch quickstart/main.mjs",
+    "start:quickstart": "node quickstart/main.mjs",
+    "dev:quickstart": "node --watch quickstart/main.mjs",
+    "clean": "rm -rf node_modules package-lock.json"
+  },
+  "dependencies": {
+    "fastify-server": "file:.."
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

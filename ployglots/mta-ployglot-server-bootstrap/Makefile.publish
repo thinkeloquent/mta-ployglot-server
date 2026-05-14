@@ -1,0 +1,127 @@
+# Makefile.publish — release orchestration for this monorepo.
+#
+# Subprojects:
+#   fastapi_server/  -> PyPI  (hatchling build, twine upload)
+#   fastify_server/  -> npm   (tsc build, npm publish)
+#
+# Auth (set in your shell, not in this file):
+#   REGISTRY_PIPY       production PyPI token  (used as TWINE_PASSWORD)
+#   REGISTRY_PIPY_TEST  TestPyPI token         (used as TWINE_PASSWORD)
+#   npm                 interactive `npm login` — run once before publish-npm
+#
+# Common flows:
+#   make -f Makefile.publish help
+#   make -f Makefile.publish build
+#   make -f Makefile.publish check
+#   make -f Makefile.publish publish-test      # TestPyPI + npm --dry-run
+#   make -f Makefile.publish publish           # PyPI + npm (real)
+#
+# This file never auto-runs. The user invokes a target deliberately.
+
+PY_DIR  := fastapi_server
+NPM_DIR := fastify_server
+
+PYTHON ?= python3.11
+TWINE  ?= twine
+NPM    ?= npm
+
+# -- help --------------------------------------------------------------------
+
+.DEFAULT_GOAL := help
+
+.PHONY: help
+help:
+	@echo "Usage: make -f Makefile.publish <target>"
+	@echo ""
+	@echo "Build:"
+	@echo "  build            Build both Python and npm artifacts"
+	@echo "  build-py         python -m build  -> $(PY_DIR)/dist/"
+	@echo "  build-npm        npm run build    -> $(NPM_DIR)/dist/"
+	@echo ""
+	@echo "Check:"
+	@echo "  check            Validate both built artifacts"
+	@echo "  check-py         twine check $(PY_DIR)/dist/*"
+	@echo "  check-npm        npm pack --dry-run in $(NPM_DIR)"
+	@echo ""
+	@echo "Clean:"
+	@echo "  clean            Remove build artifacts from both subprojects"
+	@echo "  clean-py         rm -rf $(PY_DIR)/dist"
+	@echo "  clean-npm        npm run clean in $(NPM_DIR)"
+	@echo ""
+	@echo "Publish (test):"
+	@echo "  publish-test     publish-py-test + publish-npm-test"
+	@echo "  publish-py-test  twine upload --repository testpypi  (uses \$$REGISTRY_PIPY_TEST)"
+	@echo "  publish-npm-test npm publish --dry-run"
+	@echo ""
+	@echo "Publish (prod):"
+	@echo "  publish          publish-py + publish-npm"
+	@echo "  publish-py       twine upload                        (uses \$$REGISTRY_PIPY)"
+	@echo "  publish-npm      npm publish                         (requires prior \`npm login\`)"
+
+# -- build -------------------------------------------------------------------
+
+.PHONY: build build-py build-npm
+build: build-py build-npm
+
+build-py: clean-py
+	cd $(PY_DIR) && $(PYTHON) -m build
+
+build-npm: clean-npm
+	cd $(NPM_DIR) && $(NPM) install && $(NPM) run build
+
+# -- check -------------------------------------------------------------------
+
+.PHONY: check check-py check-npm
+check: check-py check-npm
+
+check-py:
+	cd $(PY_DIR) && $(TWINE) check dist/*
+
+check-npm:
+	cd $(NPM_DIR) && $(NPM) pack --dry-run
+
+# -- clean -------------------------------------------------------------------
+
+.PHONY: clean clean-py clean-npm
+clean: clean-py clean-npm
+
+clean-py:
+	rm -rf $(PY_DIR)/dist
+
+clean-npm:
+	cd $(NPM_DIR) && $(NPM) run clean
+
+# -- publish: PyPI -----------------------------------------------------------
+
+.PHONY: publish-py-test publish-py
+publish-py-test: build-py check-py
+	@if [ -z "$$REGISTRY_PIPY_TEST" ]; then \
+		echo "ERROR: REGISTRY_PIPY_TEST is not set in the environment"; \
+		exit 1; \
+	fi
+	cd $(PY_DIR) && TWINE_USERNAME=__token__ TWINE_PASSWORD=$$REGISTRY_PIPY_TEST \
+		$(TWINE) upload --repository testpypi --non-interactive dist/*
+
+publish-py: build-py check-py
+	@if [ -z "$$REGISTRY_PIPY" ]; then \
+		echo "ERROR: REGISTRY_PIPY is not set in the environment"; \
+		exit 1; \
+	fi
+	cd $(PY_DIR) && TWINE_USERNAME=__token__ TWINE_PASSWORD=$$REGISTRY_PIPY \
+		$(TWINE) upload --non-interactive dist/*
+
+# -- publish: npm ------------------------------------------------------------
+
+.PHONY: publish-npm-test publish-npm
+publish-npm-test: build-npm check-npm
+	cd $(NPM_DIR) && $(NPM) publish --dry-run
+
+publish-npm: build-npm check-npm
+	@echo ">> Running 'npm publish' in $(NPM_DIR). Requires prior 'npm login'."
+	cd $(NPM_DIR) && $(NPM) publish
+
+# -- umbrella ----------------------------------------------------------------
+
+.PHONY: publish-test publish
+publish-test: publish-py-test publish-npm-test
+publish: publish-py publish-npm

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "example-fastapi-app"
+version = "0.0.0"
+description = "Minimal FastAPI app demonstrating print_routes_fastapi."
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "fastapi==0.128.0",
+  "uvicorn[standard]==0.40.0",
+  "print-routes-fastapi",
+]
+
+[tool.uv.sources]
+print-routes-fastapi = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["example_fastapi_app"]

@@ -1,0 +1,38 @@
+[
+  {
+    "name": "null at scalar removes key",
+    "base": { "a": 1 },
+    "override": { "a": null },
+    "expected": {}
+  },
+  {
+    "name": "scalar overwrite",
+    "base": { "a": 1 },
+    "override": { "a": 2 },
+    "expected": { "a": 2 }
+  },
+  {
+    "name": "nested dict recursive merge",
+    "base": { "a": { "x": 1 } },
+    "override": { "a": { "y": 2 } },
+    "expected": { "a": { "x": 1, "y": 2 } }
+  },
+  {
+    "name": "null at dict branch removes whole subtree",
+    "base": { "a": { "x": 1 } },
+    "override": { "a": null },
+    "expected": {}
+  },
+  {
+    "name": "empty override leaves base intact",
+    "base": { "a": 1 },
+    "override": {},
+    "expected": { "a": 1 }
+  },
+  {
+    "name": "arrays replace (not merge)",
+    "base": { "a": [1] },
+    "override": { "a": [2] },
+    "expected": { "a": [2] }
+  }
+]

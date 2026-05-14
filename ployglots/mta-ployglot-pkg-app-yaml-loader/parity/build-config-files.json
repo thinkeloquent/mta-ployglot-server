@@ -1,0 +1,57 @@
+[
+  {
+    "name": "default base + default suffixes",
+    "configDir": "/cfg",
+    "appEnv": "prod",
+    "expected": [
+      "/cfg/base.yml",
+      "/cfg/security.yml",
+      "/cfg/api-release-date.yml",
+      "/cfg/feature_flags.yml",
+      "/cfg/server.prod.yaml",
+      "/cfg/endpoint.prod.yaml"
+    ]
+  },
+  {
+    "name": "default with dev env",
+    "configDir": "/cfg",
+    "appEnv": "dev",
+    "expected": [
+      "/cfg/base.yml",
+      "/cfg/security.yml",
+      "/cfg/api-release-date.yml",
+      "/cfg/feature_flags.yml",
+      "/cfg/server.dev.yaml",
+      "/cfg/endpoint.dev.yaml"
+    ]
+  },
+  {
+    "name": "single base, no env suffixes",
+    "configDir": "/x",
+    "appEnv": "prod",
+    "baseFiles": ["a.yml"],
+    "envSuffixes": [],
+    "expected": ["/x/a.yml"]
+  },
+  {
+    "name": "no base, single env suffix",
+    "configDir": "/x",
+    "appEnv": "test",
+    "baseFiles": [],
+    "envSuffixes": ["server"],
+    "expected": ["/x/server.test.yaml"]
+  },
+  {
+    "name": "custom base + custom suffixes",
+    "configDir": "/c",
+    "appEnv": "qa",
+    "baseFiles": ["foo.yml", "bar.yml"],
+    "envSuffixes": ["alpha", "beta"],
+    "expected": [
+      "/c/foo.yml",
+      "/c/bar.yml",
+      "/c/alpha.qa.yaml",
+      "/c/beta.qa.yaml"
+    ]
+  }
+]

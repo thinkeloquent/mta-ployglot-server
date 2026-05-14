@@ -1,0 +1,73 @@
+cors:
+  origins:
+    - "http://localhost:51000"   # Fastify server (serves frontend)
+    - "http://localhost:52000"   # FastAPI server
+    - "http://localhost:5173"    # Vite dev server
+    - "http://localhost:5200"    # Vite component dev servers (52xx range)
+    - "http://localhost:5201"
+    - "http://localhost:5202"
+    - "http://localhost:5203"
+    - "http://localhost:3000"    # Common dev port
+    - "http://127.0.0.1:51000"
+    - "http://127.0.0.1:52000"
+    - "http://127.0.0.1:5173"
+    - "http://127.0.0.1:3000"
+  methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "PATCH"
+  allowedHeaders:
+    - "Content-Type"
+    - "Authorization"
+  credentials: true
+  maxAge: 86400
+
+contentSecurityPolicy:
+  reportOnly: false
+  reportEndpoint: "/api/csp-report"
+  directives:
+    defaultSrc:
+      - "'self'"
+    scriptSrc:
+      - "'self'"
+    styleSrc:
+      - "'self'"
+      - "'unsafe-inline'"
+    imgSrc:
+      - "'self'"
+      - "data:"
+      - "blob:"
+      - "https://avatars.githubusercontent.com"
+      - "https://figma-alpha-api.s3.us-west-2.amazonaws.com"
+      - "https://*.figma.com"
+    fontSrc:
+      - "'self'"
+    connectSrc:
+      - "'self'"
+      - "http://localhost:52000"
+      - "http://127.0.0.1:52000"
+    objectSrc:
+      - "'none'"
+    frameSrc:
+      - "'none'"
+    baseUri:
+      - "'self'"
+    formAction:
+      - "'self'"
+    frameAncestors:
+      - "'none'"
+    reportUri:
+      - "/api/csp-report"
+
+cache:
+  noCache: true
+  headers:
+    cacheControl: "no-cache, no-store, must-revalidate"
+    pragma: "no-cache"
+    expires: "0"
+
+fastify:
+  cors:
+    origin: false

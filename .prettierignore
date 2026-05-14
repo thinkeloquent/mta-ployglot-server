@@ -1,0 +1,35 @@
+# Prettier ignore list.
+#
+# Makefiles are tab-indented by spec (GNU make requires recipe lines to begin
+# with a literal TAB or it fails with "missing separator. Stop."). Prettier
+# doesn't natively parse makefiles, but plugins (or accidentally running
+# `prettier --write **/*`) can mangle them. Patterns below are gitignore-
+# style and match at any depth.
+
+# Makefiles
+Makefile
+Makefile.*
+makefile
+GNUmakefile
+*.mk
+
+# Build / install artifacts (not source — never useful to format)
+node_modules/
+dist/
+build/
+.venv/
+.docker-stage/
+.dev/
+.prod/
+.turbo/
+.next/
+.cache/
+
+# Lockfiles — never format
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+poetry.lock
+uv.lock
+Cargo.lock
+go.sum

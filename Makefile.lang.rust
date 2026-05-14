@@ -1,0 +1,42 @@
+# Makefile.lang.rust — Cargo virtual workspace wrapper.
+#
+# Like Go, Cargo operates on the entire virtual workspace at once. The
+# emitted root Cargo.toml ($(ROOT_DIR)/Cargo.toml) is .gitignore'd and
+# regenerated from workspace.toml by emit-cargo.sh.
+
+CARGO            ?= $(shell command -v cargo 2>/dev/null)
+ROOT_CARGO_TOML  ?= $(ROOT_DIR)/Cargo.toml
+
+.PHONY: rust.install rust.ci-install rust.lint rust.test rust.build rust.clean rust.ci
+
+rust.install: ## (rust) cargo fetch
+	@if [ -z "$(CARGO)" ]; then echo "skip: no cargo on PATH"; exit 0; fi; \
+	if [ ! -f "$(ROOT_CARGO_TOML)" ]; then echo "skip: no Rust workspace (run emit-cargo first)"; exit 0; fi; \
+	cd $(ROOT_DIR) && $(CARGO) fetch
+
+rust.ci-install: ## (rust) deterministic fetch (locked)
+	@if [ -z "$(CARGO)" ]; then echo "skip: no cargo on PATH"; exit 0; fi; \
+	if [ ! -f "$(ROOT_CARGO_TOML)" ]; then echo "skip: no Rust workspace"; exit 0; fi; \
+	cd $(ROOT_DIR) && $(CARGO) fetch --locked
+
+rust.lint: ## (rust) clippy --workspace -D warnings
+	@if [ -z "$(CARGO)" ]; then echo "skip: no cargo on PATH"; exit 0; fi; \
+	if [ ! -f "$(ROOT_CARGO_TOML)" ]; then echo "skip: no Rust workspace"; exit 0; fi; \
+	cd $(ROOT_DIR) && $(CARGO) clippy --workspace --all-targets -- -D warnings
+
+rust.test: ## (rust) test the entire workspace
+	@if [ -z "$(CARGO)" ]; then echo "skip: no cargo on PATH"; exit 0; fi; \
+	if [ ! -f "$(ROOT_CARGO_TOML)" ]; then echo "skip: no Rust workspace"; exit 0; fi; \
+	cd $(ROOT_DIR) && $(CARGO) test --workspace
+
+rust.build: ## (rust) build the entire workspace
+	@if [ -z "$(CARGO)" ]; then echo "skip: no cargo on PATH"; exit 0; fi; \
+	if [ ! -f "$(ROOT_CARGO_TOML)" ]; then echo "skip: no Rust workspace"; exit 0; fi; \
+	cd $(ROOT_DIR) && $(CARGO) build --workspace
+
+rust.clean: ## (rust) cargo clean
+	@if [ -z "$(CARGO)" ]; then echo "skip: no cargo on PATH"; exit 0; fi; \
+	if [ ! -f "$(ROOT_CARGO_TOML)" ]; then echo "skip: no Rust workspace"; exit 0; fi; \
+	cd $(ROOT_DIR) && $(CARGO) clean
+
+rust.ci: rust.ci-install rust.lint rust.test rust.build ## (rust) full pipeline

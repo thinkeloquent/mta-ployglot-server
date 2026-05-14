@@ -1,0 +1,39 @@
+[package]
+name         = "flattenfs"
+version      = "0.1.0"
+edition      = "2021"
+rust-version = "1.75"
+description  = "Flatten a directory tree by depth with UUID filenames. CLI + SDK."
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/rcmarte/flattenfs"
+readme       = "README.md"
+keywords     = ["cli", "filesystem", "flatten", "directory", "uuid"]
+categories   = ["command-line-utilities", "filesystem"]
+
+[lib]
+path = "src/lib.rs"
+
+# Binary target auto-detected from src/main.rs; name matches package.
+
+[dependencies]
+clap       = { version = "4", features = ["derive"] }
+ignore     = "0.4"
+uuid       = { version = "1", features = ["v4"] }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror  = "1"
+anyhow     = "1"
+
+[dev-dependencies]
+tempfile = "3"
+regex    = "1"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[profile.release]
+lto           = true
+codegen-units = 1
+strip         = "symbols"
+panic         = "abort"
+opt-level     = 3

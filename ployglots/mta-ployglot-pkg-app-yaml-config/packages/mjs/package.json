@@ -1,0 +1,11 @@
+{
+  "name": "@ployglot/app-yaml-config",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": { ".": "./src/index.mjs" },
+  "scripts": { "test": "node --test __tests__" },
+  "engines": { "node": ">=20" },
+  "peerDependencies": { "app-yaml-loader": "^0.1.0" },
+  "peerDependenciesMeta": { "app-yaml-loader": { "optional": true } }
+}

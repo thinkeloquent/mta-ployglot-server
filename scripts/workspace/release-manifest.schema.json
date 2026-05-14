@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Release Manifest",
+  "description": "Record of a single release-branch assembly event. Written by the PR-merge workflow (.github/workflows/release-assemble-on-pr-merge.yml) and consumed by `make release-assemble REF= MANIFEST=` and `make release-tag-propagate`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["release_ref", "cut_at", "cut_by", "sibling"],
+  "properties": {
+    "release_ref": {
+      "type": "string",
+      "pattern": "^release/.+",
+      "description": "Release branch this manifest records (e.g. release/2026.05.0)."
+    },
+    "cut_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of when the assembly ran."
+    },
+    "cut_by": {
+      "type": "string",
+      "description": "Author identity that produced the assembly (workflow bot or human)."
+    },
+    "sibling": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "pinned_sha", "pinned_from_ref", "local_path"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "pinned_sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$",
+            "description": "Full 40-char sibling HEAD SHA at assembly time."
+          },
+          "pinned_from_ref": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Source branch on the sibling repo from which the SHA was taken."
+          },
+          "local_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Snapshot of the registry's local_path at assembly time."
+          }
+        }
+      }
+    }
+  }
+}

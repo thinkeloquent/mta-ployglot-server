@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polyglot.local/hooks.schema.json",
+  "title": "Hooks",
+  "description": "Documents the three lifecycle hook signatures used by lifecycle addons. All three accept (server, config) and may be sync or async. Return value is ignored.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "onInit":     { "$ref": "#/$defs/hook" },
+    "onStartup":  { "$ref": "#/$defs/hook" },
+    "onShutdown": { "$ref": "#/$defs/hook" }
+  },
+  "$defs": {
+    "hook": {
+      "description": "function(server, config) -> void | Promise<void>",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" }
+      }
+    }
+  }
+}

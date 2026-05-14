@@ -1,0 +1,190 @@
+{
+  "repo": "mta-ployglot-server-bootstrap",
+  "root": ".",
+  "generatedAt": "2026-04-24T04:47:04.816Z",
+  "generator": ".agent/scan.mjs",
+  "totalSkills": 13,
+  "packages": [
+    {
+      "name": "fastapi_server",
+      "sourceDir": "fastapi_server/.agents",
+      "skills": [
+        {
+          "file": "fastapi_server/.agents/addon-author.md",
+          "name": "addon-author",
+          "scope": "fastapi_server",
+          "description": "Scaffold a new Python addon that plugs into the fastapi_server bootstrap pipeline — correct signature, failure isolation, and LoaderReport shape.",
+          "triggers": [
+            "write an addon",
+            "new bootstrap addon",
+            "custom loader",
+            "extend the pipeline"
+          ]
+        },
+        {
+          "file": "fastapi_server/.agents/contract-parity.md",
+          "name": "contract-parity",
+          "scope": "fastapi_server",
+          "description": "Safely change a JSON Schema under contracts/ and mirror it to fastify_server so parity tests stay green.",
+          "triggers": [
+            "update schema",
+            "contract parity",
+            "sync contracts",
+            "bootstrap.schema.json",
+            "loader.schema.json",
+            "hooks.schema.json"
+          ]
+        },
+        {
+          "file": "fastapi_server/.agents/lifecycle-hook.md",
+          "name": "lifecycle-hook",
+          "scope": "fastapi_server",
+          "description": "Write `on_init` / `on_startup` / `on_shutdown` modules that the lifecycle_addon will pick up and run at the right phase.",
+          "triggers": [
+            "lifecycle hook",
+            "on_startup",
+            "on_shutdown",
+            "on_init",
+            "startup hook",
+            "shutdown hook"
+          ]
+        },
+        {
+          "file": "fastapi_server/.agents/loader-report.md",
+          "name": "loader-report",
+          "scope": "fastapi_server",
+          "description": "Build, mutate, and assert on LoaderReport instances. The canonical result shape every addon must return.",
+          "triggers": [
+            "loader report",
+            "LoaderReport",
+            "report.errors",
+            "report_error"
+          ]
+        },
+        {
+          "file": "fastapi_server/.agents/pyproject-publish.md",
+          "name": "pyproject-publish",
+          "scope": "fastapi_server",
+          "description": "Update pyproject.toml and staging files for a PyPI release of thinkeloquent-fastapi-server. Do NOT run publish commands — scaffold a Makefile.publish for the user instead.",
+          "triggers": [
+            "release",
+            "publish to pypi",
+            "bump version",
+            "pyproject",
+            "twine"
+          ]
+        },
+        {
+          "file": "fastapi_server/.agents/route-module.md",
+          "name": "route-module",
+          "scope": "fastapi_server",
+          "description": "Write a *.routes.py module that the built-in route_addon will discover and mount on the FastAPI app.",
+          "triggers": [
+            "routes file",
+            "mount router",
+            "APIRouter",
+            "route module"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "fastify_server",
+      "sourceDir": "fastify_server/.agents",
+      "skills": [
+        {
+          "file": "fastify_server/.agents/addon-author.md",
+          "name": "addon-author",
+          "scope": "fastify_server",
+          "description": "Scaffold a new TypeScript addon that plugs into the fastify_server bootstrap pipeline — correct signature, failure isolation, and LoaderReport shape.",
+          "triggers": [
+            "write an addon",
+            "new bootstrap addon",
+            "custom loader",
+            "extend the pipeline"
+          ]
+        },
+        {
+          "file": "fastify_server/.agents/contract-parity.md",
+          "name": "contract-parity",
+          "scope": "fastify_server",
+          "description": "Safely change a JSON Schema under contracts/ and mirror it to fastapi_server so parity tests stay green.",
+          "triggers": [
+            "update schema",
+            "contract parity",
+            "sync contracts",
+            "bootstrap.schema.json",
+            "loader.schema.json",
+            "hooks.schema.json"
+          ]
+        },
+        {
+          "file": "fastify_server/.agents/esm-nodenext.md",
+          "name": "esm-nodenext",
+          "scope": "fastify_server",
+          "description": "Rules for ESM + TypeScript NodeNext in this package — the .js import-specifier rule, node: imports, dynamic import via pathToFileURL.",
+          "triggers": [
+            "import specifier",
+            "ERR_MODULE_NOT_FOUND",
+            "cannot find module",
+            "nodenext",
+            "module resolution",
+            ".js extension"
+          ]
+        },
+        {
+          "file": "fastify_server/.agents/lifecycle-hook.md",
+          "name": "lifecycle-hook",
+          "scope": "fastify_server",
+          "description": "Write `onInit` / `onStartup` / `onShutdown` modules that the lifecycleAddon will pick up and wire into Fastify's hook system.",
+          "triggers": [
+            "lifecycle hook",
+            "onStartup",
+            "onShutdown",
+            "onInit",
+            "startup hook",
+            "shutdown hook"
+          ]
+        },
+        {
+          "file": "fastify_server/.agents/loader-report.md",
+          "name": "loader-report",
+          "scope": "fastify_server",
+          "description": "Build, mutate, and assert on LoaderReport instances. The canonical result shape every addon must return.",
+          "triggers": [
+            "loader report",
+            "LoaderReport",
+            "report.errors",
+            "reportError"
+          ]
+        },
+        {
+          "file": "fastify_server/.agents/package-publish.md",
+          "name": "package-publish",
+          "scope": "fastify_server",
+          "description": "Update package.json and tsconfig.json for an npm release of @ployglot/fastify-server. Do NOT run publish commands — scaffold a Makefile.publish for the user instead.",
+          "triggers": [
+            "release",
+            "publish to npm",
+            "bump version",
+            "package.json",
+            "npm publish"
+          ]
+        },
+        {
+          "file": "fastify_server/.agents/route-module.md",
+          "name": "route-module",
+          "scope": "fastify_server",
+          "description": "Write a *.routes.mjs module that the built-in routeAddon will discover and register as a Fastify plugin.",
+          "triggers": [
+            "routes file",
+            "register routes",
+            "fastify plugin",
+            "route module"
+          ]
+        }
+      ]
+    }
+  ],
+  "orphans": []
+}

@@ -1,0 +1,15 @@
+release_ref = "release/2026.05.0"
+cut_at = "2026-05-01T14:32:00Z"
+cut_by = "Carlos Marte <robmarte@gmail.com>"
+
+[[sibling]]
+name = "mta-ployglot-pkg-fetch-client"
+pinned_sha = "fedcba9876543210fedcba9876543210fedcba98"
+pinned_from_ref = "main"
+local_path = "../mta-ployglot-pkg-fetch-client"
+
+[[sibling]]
+name = "mta-ployglot-pkg-vault"
+pinned_sha = "0123456789abcdef0123456789abcdef01234567"
+pinned_from_ref = "main"
+local_path = "../mta-ployglot-pkg-vault"

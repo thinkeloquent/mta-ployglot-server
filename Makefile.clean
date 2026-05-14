@@ -1,0 +1,114 @@
+# Makefile.clean — remove dependency lock files and install-time caches.
+#
+# Two distinct buckets, exposed as separate targets so callers can pick:
+#
+#   clean-locks         remove ONLY pinned-version manifests written by a
+#                       package manager (package-lock.json, pnpm-lock.yaml,
+#                       poetry.lock, uv.lock, Cargo.lock,
+#                       .dev/workspace.toml.lock.json). Keeps node_modules
+#                       and .venv intact — useful when you want the next
+#                       install to RE-RESOLVE versions but reuse downloaded
+#                       artifacts.
+#
+#   clean-install-cache remove ONLY resolved caches and build outputs
+#                       (node_modules, .venv, __pycache__, .pytest_cache,
+#                       dist, build, .dev/). Keeps lock files intact —
+#                       useful when you want a deterministic re-install
+#                       from the existing locks.
+#
+#   clean-deps          aggregator: stop dev servers + remove BOTH locks
+#                       and caches. Full dependency-state reset.
+#
+# Out of scope: git-tracked sources, .env, the SSOT workspace.toml.
+
+# Lock-file glob patterns recognized by clean-locks. Searched recursively
+# from $(ROOT_DIR) with prunes (see CLEAN_LOCK_PRUNES) so subdirectory
+# lock files (e.g. .dev/fastify/package-lock.json,
+# .dev/fastify-app/package-lock.json, examples/**/package-lock.json) are
+# also caught, not just the canonical $(SERVER_FASTIFY)/package-lock.json.
+CLEAN_LOCK_NAMES := \
+  package-lock.json \
+  pnpm-lock.yaml \
+  yarn.lock \
+  poetry.lock \
+  uv.lock \
+  Pipfile.lock \
+  Cargo.lock
+
+# Prune list — paths whose contents must NEVER be deleted by clean-locks.
+# These are package-manager INTERNALS: `node_modules/<dep>/package-lock.json`
+# is npm-managed vendored state, not a developer-authored lock; `.venv/` is
+# a python virtualenv that never carries developer locks. Removing either
+# would corrupt an active install. Everything else under $(ROOT_DIR) is
+# fair game — including:
+#
+#   - server/fastify/package-lock.json
+#   - .dev/{fastify,fastify-app}/package-lock.json
+#   - .dev/workspace.toml.lock.json (workspace projection)
+#   - ployglots/<sibling>/**/{package-lock.json,uv.lock,Cargo.lock,…}
+#     reached via `find -L` through the per-sibling symlinks
+#   - scripts/workspace/orchestrator/tests/fixtures/workspace.toml.lock.json
+#     — yes, this is a tracked test fixture; `clean-locks` will delete it
+#     and orchestrator tests will fail until you `git restore` it. That's
+#     the semantically literal behavior you asked for; a one-liner restore
+#     line is printed at the end of the sweep so you know where to look.
+CLEAN_LOCK_PRUNES := \
+  -path '*/node_modules' -o \
+  -path '*/.venv'
+
+# Tracked test fixtures that `clean-locks` will sweep. After running, the
+# user must `git restore` them or the relevant test suite breaks. Listed
+# here so the recipe can print a precise restoration hint.
+CLEAN_LOCK_TRACKED_FIXTURES := \
+  scripts/workspace/orchestrator/tests/fixtures/workspace.toml.lock.json
+
+.PHONY: clean-locks
+clean-locks: ## Remove every lock file under $(ROOT_DIR) (incl. symlinked siblings, .dev/, fixtures)
+	@# Build `-name X -o -name Y …` from CLEAN_LOCK_NAMES, plus an explicit
+	@# match for the workspace projection lock (`workspace.toml.lock.json`).
+	@# `find -L` follows the per-sibling symlinks under ployglots/ so locks
+	@# in `../../mta-ployglot-*/` are caught from this orchestration shell.
+	@name_expr=""; for n in $(CLEAN_LOCK_NAMES) workspace.toml.lock.json; do \
+	  if [ -z "$$name_expr" ]; then name_expr="-name $$n"; \
+	  else name_expr="$$name_expr -o -name $$n"; fi; \
+	done; \
+	count=0; fixtures_deleted=0; \
+	while IFS= read -r f; do \
+	  [ -z "$$f" ] && continue; \
+	  echo "==> rm $$f"; rm -f "$$f"; count=$$((count+1)); \
+	  for fx in $(CLEAN_LOCK_TRACKED_FIXTURES); do \
+	    case "$$f" in *"$$fx") fixtures_deleted=1 ;; esac; \
+	  done; \
+	done < <(find -L $(ROOT_DIR) \
+	    \( $(CLEAN_LOCK_PRUNES) \) -prune \
+	    -o -type f \( $$name_expr \) -print 2>/dev/null); \
+	echo "==> $$count lock file(s) cleaned"; \
+	if [ "$$fixtures_deleted" = "1" ]; then \
+	  echo ""; \
+	  echo "==> NOTE: a tracked test fixture was deleted. Restore with:"; \
+	  for fx in $(CLEAN_LOCK_TRACKED_FIXTURES); do \
+	    echo "      git restore $$fx"; \
+	  done; \
+	fi
+
+.PHONY: clean-install-cache
+clean-install-cache: ## Remove install caches (node_modules, .venv, __pycache__, dist, build, .dev/)
+	@# Server runtimes — node_modules + dist for fastify, .venv + python caches for fastapi.
+	rm -rf $(SERVER_FASTIFY)/node_modules $(SERVER_FASTIFY)/dist
+	rm -rf $(SERVER_FASTAPI)/.venv $(SERVER_FASTAPI)/.pytest_cache \
+	       $(SERVER_FASTAPI)/dist $(SERVER_FASTAPI)/build
+	@# Repo-wide python bytecode + pytest caches. Prune ployglots/* (sibling
+	@# source trees — they own their own clean targets) and node_modules
+	@# (already handled above; avoids descending into nested copies).
+	@find $(ROOT_DIR) \
+	    \( -path $(ROOT_DIR)/ployglots -o -path '*/node_modules' \) -prune \
+	    -o \( -type d \( -name __pycache__ -o -name .pytest_cache \) \) -print \
+	    | xargs rm -rf 2>/dev/null || true
+	@# Dev-mode staging: equivalent to `make dev-clean` but invoked inline
+	@# so a single `clean-install-cache` is sufficient.
+	rm -rf $(DEV_DIR)
+	@echo "==> install caches cleaned"
+
+.PHONY: clean-deps
+clean-deps: dev-stop clean-locks clean-install-cache ## Full reset: stop dev servers + remove locks + caches
+	@echo "==> dependency state fully reset — next install will resolve and download fresh"

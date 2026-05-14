@@ -1,0 +1,92 @@
+# ---------------------------------------------------------------------------
+# RAG UI Component Ingest — framework configuration
+# ---------------------------------------------------------------------------
+# Resolution chain: YAML (base) -> env vars (override) -> computed defaults
+#
+# Framework keys use hyphens and double as the `slug`.
+#
+# Per-framework flags:
+#   enabled:      include in server startup (default: true)
+#   auto_ingest:  run ingestion in `make dev` if no data exists (default from defaults)
+
+component_ingest:
+  defaults:
+    chunk_size: 1200
+    chunk_overlap: 150
+    file_extensions: [".tsx", ".jsx", ".ts", ".js", ".md", ".mdx", ".css", ".less", ".scss"]
+    ignored_directories: ["node_modules", "__tests__", "demo", "locale", "style", "__snapshots__"]
+    component_path_segment: "components"
+    auto_ingest: false
+
+  framework:
+    ant-design:
+      name: "Ant Design"
+      version: "5.x"
+      import_packages: ["antd", "@ant-design/icons", "@ant-design/pro-components"]
+      source_directory: "${project_root}/dataset/repos/ant-design/components"
+      examples_directory: "${project_root}/test/integration/RAG001/ant-design/components-examples"
+      enabled: true
+      auto_ingest: false
+
+    blueprint:
+      name: "Blueprint"
+      import_packages: ["@blueprintjs/core", "@blueprintjs/icons"]
+      source_directory: "${project_root}/dataset/repos/blueprint/packages"
+      enabled: true
+      auto_ingest: false
+
+    chakra-ui:
+      name: "Chakra UI"
+      import_packages: ["@chakra-ui/react"]
+      source_directory: "${project_root}/dataset/repos/chakra-ui/packages"
+      enabled: true
+      auto_ingest: false
+
+    fluentui:
+      name: "Fluent UI"
+      import_packages: ["@fluentui/react-components", "@fluentui/react"]
+      source_directory: "${project_root}/dataset/repos/fluentui/packages"
+      enabled: true
+      auto_ingest: false
+
+    mantine:
+      name: "Mantine"
+      import_packages: ["@mantine/core", "@mantine/hooks"]
+      source_directory: "${project_root}/dataset/repos/mantine/packages"
+      enabled: true
+      auto_ingest: false
+
+    material-ui:
+      name: "Material UI"
+      import_packages: ["@mui/material", "@mui/icons-material", "@mui/lab"]
+      source_directory: "${project_root}/dataset/repos/material-ui/packages"
+      enabled: true
+      auto_ingest: false
+
+    primitives:
+      name: "Radix Primitives"
+      import_packages: ["@radix-ui/react-dialog", "@radix-ui/react-popover", "@radix-ui/react-tooltip"]
+      source_directory: "${project_root}/dataset/repos/primitives/packages"
+      enabled: true
+      auto_ingest: false
+
+    react-bootstrap:
+      name: "React Bootstrap"
+      import_packages: ["react-bootstrap"]
+      source_directory: "${project_root}/dataset/repos/react-bootstrap/src"
+      enabled: true
+      auto_ingest: false
+
+    semantic-ui-react:
+      name: "Semantic UI React"
+      import_packages: ["semantic-ui-react"]
+      source_directory: "${project_root}/dataset/repos/semantic-ui-react/src"
+      enabled: true
+      auto_ingest: false
+
+    ui:
+      name: "shadcn/ui"
+      import_packages: ["@/components/ui"]
+      source_directory: "${project_root}/dataset/repos/ui/packages"
+      enabled: true
+      auto_ingest: false

@@ -1,0 +1,11 @@
+[project]
+name = "mta-ployglot-pkg-app-yaml-fetch-config"
+version = "0.0.0"
+description = "Polyglot package: turn YAML endpoint config into HTTP fetch ARGS."
+requires-python = ">=3.11,<3.12"
+
+[tool.uv.workspace]
+members = ["packages/py"]
+
+[tool.uv]
+package = false

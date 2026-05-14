@@ -1,0 +1,16 @@
+{
+  "name": "mta-ployglot-api-github-project",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Polyglot (Node, Python-stub) API for GitHub Projects v2 with custom HOST and proxy support.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/mjs"
+  ],
+  "scripts": {
+    "test": "sh -c 'npm test --workspaces --if-present'"
+  }
+}

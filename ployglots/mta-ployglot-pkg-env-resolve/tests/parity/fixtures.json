@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "C1-arg-tier-wins",
+      "function": "resolve",
+      "inputs": {"arg": "from-arg", "env_keys": "X", "env": {"X": "from-env"}, "config": {"x": "from-cfg"}, "config_key": "x", "default": "DEFAULT"},
+      "expected": "from-arg",
+      "notes": "C1: priority order arg > env > config > default"
+    },
+    {
+      "id": "C2-env-list-first-match",
+      "function": "resolve",
+      "inputs": {"arg": null, "env_keys": ["MISSING_A", "DATABASE_URL", "MISSING_B"], "env": {"DATABASE_URL": "postgres://x"}, "config": null, "config_key": null, "default": "DEFAULT"},
+      "expected": "postgres://x",
+      "notes": "C2: list of candidate keys, first-match wins"
+    },
+    {
+      "id": "C3-bool-coerce-yes",
+      "function": "resolve_bool",
+      "inputs": {"arg": null, "env_keys": "FLAG", "env": {"FLAG": "yes"}, "config": null, "config_key": null, "default": false},
+      "expected": true,
+      "notes": "C3: 'yes' is in TRUTHY_STRINGS"
+    },
+    {
+      "id": "C4-int-coerce-clean-string",
+      "function": "resolve_int",
+      "inputs": {"arg": null, "env_keys": "PORT", "env": {"PORT": "8080"}, "config": null, "config_key": null, "default": 80},
+      "expected": 8080,
+      "notes": "C4: clean integer string parses cleanly"
+    },
+    {
+      "id": "C5-float-coerce-clean-string",
+      "function": "resolve_float",
+      "inputs": {"arg": null, "env_keys": "RATE", "env": {"RATE": "0.25"}, "config": null, "config_key": null, "default": 1.0},
+      "expected": 0.25,
+      "notes": "C5: clean float string parses cleanly"
+    },
+    {
+      "id": "C6-arg-nullish-falls-through",
+      "function": "resolve",
+      "inputs": {"arg": null, "env_keys": null, "env": {}, "config": null, "config_key": null, "default": "fallback"},
+      "expected": "fallback",
+      "notes": "C6: nullish arg + no env + no config → default"
+    },
+    {
+      "id": "C7-config-tier-hit",
+      "function": "resolve",
+      "inputs": {"arg": null, "env_keys": null, "env": {}, "config": {"region": "us-west-2"}, "config_key": "region", "default": "us-east-1"},
+      "expected": "us-west-2",
+      "notes": "C7: config-tier resolves when arg + env miss"
+    },
+    {
+      "id": "D1-arg-explicit-null-falls-through",
+      "function": "resolve",
+      "inputs": {"arg": null, "env_keys": "K", "env": {"K": "from-env"}, "config": null, "config_key": null, "default": "DEFAULT"},
+      "expected": "from-env",
+      "notes": "D1: explicit null arg counts as unset; tier-2 env hit returns. Both langs converge."
+    },
+    {
+      "id": "D3-config-null-value-falls-through",
+      "function": "resolve",
+      "inputs": {"arg": null, "env_keys": null, "env": {}, "config": {"x": null}, "config_key": "x", "default": "DEFAULT"},
+      "expected": "DEFAULT",
+      "notes": "D3: config[key]=null is treated as unset; falls through to default."
+    },
+    {
+      "id": "D4-int-decimal-string-rejected",
+      "function": "resolve_int",
+      "inputs": {"arg": "3.14", "env_keys": null, "env": {}, "config": null, "config_key": null, "default": 0},
+      "expected": 0,
+      "notes": "D4: decimal-shaped string rejected; falls back to default."
+    },
+    {
+      "id": "D5-int-bool-arg-rejected",
+      "function": "resolve_int",
+      "inputs": {"arg": true, "env_keys": null, "env": {}, "config": null, "config_key": null, "default": 0},
+      "expected": 0,
+      "notes": "D5: bool arg rejected; falls back to default. Python int(True)=1 explicitly guarded."
+    },
+    {
+      "id": "D6-float-partial-numeric-rejected",
+      "function": "resolve_float",
+      "inputs": {"arg": "12abc", "env_keys": null, "env": {}, "config": null, "config_key": null, "default": 0.0},
+      "expected": 0.0,
+      "notes": "D6: partial-numeric string rejected; falls back to default. parseFloat lenient behavior overridden."
+    },
+    {
+      "id": "D7-env-keys-nullish-tolerated",
+      "function": "resolve",
+      "inputs": {"arg": null, "env_keys": null, "env": {}, "config": {"x": "from-cfg"}, "config_key": "x", "default": "DEFAULT"},
+      "expected": "from-cfg",
+      "notes": "D7: env_keys=None/null short-circuits to tier 3; original Python raised TypeError."
+    }
+  ]
+}

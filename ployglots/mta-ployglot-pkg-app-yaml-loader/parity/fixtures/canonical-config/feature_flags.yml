@@ -1,0 +1,4 @@
+feature_flags:
+  layer: feature_flags
+  flags:
+    new_loader: true

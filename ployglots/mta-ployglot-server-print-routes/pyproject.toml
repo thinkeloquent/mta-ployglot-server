@@ -1,0 +1,11 @@
+[project]
+name = "mta-ployglot-server-print-routes"
+version = "0.0.0"
+description = "Polyglot extraction of the FastAPI + Fastify route-listing helpers."
+requires-python = ">=3.11,<3.12"
+
+[tool.uv.workspace]
+members = ["packages/py", "examples/fastapi-app"]
+
+[tool.uv]
+package = false

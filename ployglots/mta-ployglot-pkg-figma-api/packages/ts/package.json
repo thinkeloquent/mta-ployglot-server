@@ -1,0 +1,40 @@
+{
+  "name": "@polyglot/figma-api",
+  "version": "0.1.0",
+  "description": "Polyglot Figma REST API client on top of @polyglot/fetch-http-client. Typed, token-auth, proxy-aware, ESM.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "lint": "prettier --check src tests examples"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@polyglot/fetch-http-client": "file:../../../mta-ployglot-pkg-fetch-client/packages/ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@vitest/coverage-v8": "^2.1.8",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

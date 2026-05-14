@@ -1,0 +1,52 @@
+{
+  "resolveConfigDir": [
+    {
+      "name": "explicit override wins",
+      "override": "/explicit/cfg",
+      "env": {},
+      "callerDir": null,
+      "expected": "/explicit/cfg"
+    },
+    {
+      "name": "empty override raises",
+      "override": "",
+      "env": {},
+      "callerDir": null,
+      "expectedError": "must not be an empty string"
+    },
+    {
+      "name": "env var when no override",
+      "override": null,
+      "env": { "CONFIG_DIR": "/from/env" },
+      "callerDir": null,
+      "expected": "/from/env"
+    },
+    {
+      "name": "empty env var raises",
+      "override": null,
+      "env": { "CONFIG_DIR": "" },
+      "callerDir": null,
+      "expectedError": "CONFIG_DIR env var must not be an empty string"
+    },
+    {
+      "name": "callerDir fallback",
+      "override": null,
+      "env": {},
+      "callerDir": "/repo/pkg/x/y/z",
+      "expected": "/repo/common/config"
+    },
+    {
+      "name": "no inputs raises",
+      "override": null,
+      "env": {},
+      "callerDir": null,
+      "expectedError": "is required"
+    }
+  ],
+  "resolveAppEnv": [
+    { "name": "override lowercases", "override": "PROD", "env": {}, "expected": "prod" },
+    { "name": "empty override falls through to env", "override": "", "env": { "APP_ENV": "STAGING" }, "expected": "staging" },
+    { "name": "no inputs returns dev", "override": null, "env": {}, "expected": "dev" },
+    { "name": "env var lowercases", "override": null, "env": { "APP_ENV": "QA" }, "expected": "qa" }
+  ]
+}

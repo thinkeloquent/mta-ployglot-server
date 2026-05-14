@@ -1,0 +1,39 @@
+[
+  {
+    "name": "empty-input",
+    "input": {},
+    "expected": {}
+  },
+  {
+    "name": "missing-global",
+    "input": { "providers": { "p": { "x": 1 } } },
+    "expected": { "providers": { "p": { "x": 1 } } }
+  },
+  {
+    "name": "missing-providers",
+    "input": { "global": { "x": 1 } },
+    "expected": { "global": { "x": 1 } }
+  },
+  {
+    "name": "both-empty",
+    "input": { "global": {}, "providers": {} },
+    "expected": { "global": {}, "providers": {} }
+  },
+  {
+    "name": "happy-path-with-conflict",
+    "input": {
+      "global": { "timeout": 5000, "region": "us" },
+      "providers": {
+        "gemini": {},
+        "openai": { "timeout": 1000 }
+      }
+    },
+    "expected": {
+      "global": { "timeout": 5000, "region": "us" },
+      "providers": {
+        "gemini": { "timeout": 5000, "region": "us" },
+        "openai": { "timeout": 1000, "region": "us" }
+      }
+    }
+  }
+]

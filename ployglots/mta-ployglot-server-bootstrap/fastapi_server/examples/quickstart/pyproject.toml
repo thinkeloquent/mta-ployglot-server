@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "fastapi-server-quickstart"
+version = "0.0.0"
+description = "Standalone runnable quickstart for fastapi-server."
+authors = ["Think Eloquent"]
+license = "MIT"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.12"
+thinkeloquent-fastapi-server = { path = "../..", develop = true }
+uvicorn = { extras = ["standard"], version = "==0.40.0" }
+
+[tool.poetry.group.dev.dependencies]
+watchfiles = ">=0.24"
+
+[build-system]
+requires = ["poetry-core>=1.8"]
+build-backend = "poetry.core.masonry.api"

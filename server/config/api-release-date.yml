@@ -1,0 +1,10 @@
+api_release_date:
+    contract_snapshot_date:
+        provider_figma_01012026: 01-01-2026
+        provider_figma: 02-01-2026
+        provider_github: 02-01-2026
+        provider_statsig: 02-01-2026
+        provider_saucelabs: 02-01-2026
+        provider_jira: 02-01-2026
+        provider_confluence_api: 02-01-2026
+        provider_s3: 02-01-2026

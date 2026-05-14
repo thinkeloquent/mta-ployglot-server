@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# generate-docker-path.sh — emit .bin/docker/path.sh with PATH + PYTHONPATH
+# for every Python and Node module discovered under ployglots/.
+#
+# The output file is meant to be sourced inside the Docker image
+# (Dockerfile.fastapi / Dockerfile.fastify). It exports two location lists,
+# each containing every entry only once, then composes PATH from them:
+#
+#   PYTHONPATH  — every Python module root (prefers `<pkg>/src` when
+#                 present, else the pyproject directory itself)
+#   NODEJSPATH  — every `<pkg>/node_modules/.bin` directory
+#   PATH        — "${PYTHONPATH}:${NODEJSPATH}:${PATH}" (no duplication;
+#                 if you change the two lists above, PATH picks it up)
+#
+# Every entry is prefixed with /application/ (the image WORKDIR);
+# override via $APP_ROOT.
+#
+# Source of truth = directory walk (not `pip install` / `npm install`):
+#   - **/pyproject.toml under ployglots/
+#   - **/package.json   under ployglots/
+# excluding node_modules / .venv / venv / dist / build / __pycache__ /
+# *.egg-info / coverage / .pytest_cache / .ruff_cache / .tox.
+#
+# Idempotent: entries are sorted + de-duplicated, so an unchanged tree
+# produces byte-identical output. The release workflow diffs the file and
+# commits on change (mirrors the .bin/docker/regenerate.py wiring).
+#
+# Companion to Dockerfile.fastapi:99-104, which already smoke-checks that
+# every editable Python sibling is installed in the venv. This script is
+# the inverse: it inventories the on-disk module layout *before* the venv
+# resolves it, so the resulting PYTHONPATH/PATH stays valid even for tools
+# invoked outside the venv (e.g. `python -c` from a one-off shell).
+#
+# Subcommands / flags:
+#   (no args)   regenerate $OUT (default .bin/docker/path.sh)
+#   --check     compare $OUT to a freshly generated copy; exit 1 on drift
+#
+# Exits:
+#   0     wrote (or --check passed)
+#   1     --check found drift
+#   64    bad args
+#   66    ployglots/ directory missing
+#   127   python3 missing (used for tomllib + JSON + sort/dedup)
+set -euo pipefail
+IFS=$'\n\t'
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${ROOT_DIR:-$(cd "$SELF_DIR/../.." && pwd)}"
+PLOYGLOTS_DIR="${PLOYGLOTS_DIR:-$ROOT_DIR/ployglots}"
+OUT="${OUT:-$ROOT_DIR/.bin/docker/path.sh}"
+APP_ROOT="${APP_ROOT:-/application}"
+
+CHECK_MODE=0
+for arg in "$@"; do
+  case "$arg" in
+    --check) CHECK_MODE=1 ;;
+    -h|--help)
+      sed -n '2,/^set -e/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//; /^set -e/d'
+      exit 0
+      ;;
+    *) echo "unknown arg: $arg" >&2; exit 64 ;;
+  esac
+done
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "missing: python3 (3.11+ for tomllib)" >&2
+  exit 127
+fi
+
+if [[ ! -d "$PLOYGLOTS_DIR" ]]; then
+  echo "missing: $PLOYGLOTS_DIR (run from a tree where ployglots/ exists)" >&2
+  exit 66
+fi
+
+TMP="$(mktemp -t path.sh.XXXXXX)"
+trap 'rm -f "$TMP"' EXIT
+
+python3 - "$PLOYGLOTS_DIR" "$ROOT_DIR" "$APP_ROOT" >"$TMP" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+ployglots_dir, root_dir, app_root = sys.argv[1], sys.argv[2], sys.argv[3]
+ployglots = Path(ployglots_dir).resolve()
+root = Path(root_dir).resolve()
+
+# Directories to skip when walking. These never own a module root we want
+# to surface as its own PATH / PYTHONPATH entry; their contents are install
+# outputs (node_modules, .venv), build artifacts (dist, build), or caches.
+SKIP_DIRS = {
+    "node_modules", ".venv", "venv", "dist", "build",
+    "__pycache__", ".pytest_cache", ".ruff_cache",
+    "coverage", ".tox", ".git",
+}
+
+py_dirs: set[Path] = set()
+node_dirs: set[Path] = set()
+
+for dirpath, dirnames, filenames in os.walk(ployglots, followlinks=True):
+    dirnames[:] = [
+        d for d in dirnames
+        if d not in SKIP_DIRS and not d.endswith(".egg-info")
+    ]
+    p = Path(dirpath)
+    if "pyproject.toml" in filenames:
+        py_dirs.add(p)
+    if "package.json" in filenames:
+        node_dirs.add(p)
+
+def to_app_path(p: Path) -> str:
+    rel = p.relative_to(root)
+    return f"{app_root}/{rel.as_posix()}"
+
+# PYTHONPATH: prefer `<dir>/src` (src-layout, e.g. pkg-vault) over the
+# pyproject dir itself (flat layout, e.g. pkg-fetch-client).
+pythonpath_entries: list[str] = []
+for d in sorted(py_dirs):
+    chosen = d / "src" if (d / "src").is_dir() else d
+    pythonpath_entries.append(to_app_path(chosen))
+
+# PATH: every package.json dir gets `<dir>/node_modules/.bin`. We don't
+# filter on the package.json having a top-level `bin` field — workspace
+# dependencies' bins end up under .bin too, and including those is the
+# whole point of putting node_modules/.bin on PATH.
+path_entries = [f"{to_app_path(d)}/node_modules/.bin" for d in sorted(node_dirs)]
+
+def dedup(xs):
+    seen, out = set(), []
+    for x in xs:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+pythonpath_entries = dedup(pythonpath_entries)
+path_entries = dedup(path_entries)
+
+print("#!/usr/bin/env bash")
+print("# .bin/docker/path.sh — generated by scripts/workspace/generate-docker-path.sh")
+print("# DO NOT EDIT BY HAND.")
+print("#")
+print("# Sourced inside the Docker image (Dockerfile.fastapi / Dockerfile.fastify).")
+print("# Each entry is rooted at /application/ (the image WORKDIR). The fastapi")
+print("# image already configures editable installs via Poetry .pth files; this")
+print("# file is a parallel, language-agnostic surface that documents every")
+print("# module location for debugging and for any script that runs outside")
+print("# the venv (e.g. `source /application/path.sh && which <cmd>`).")
+print("#")
+print(f"# Generated from {len(py_dirs)} pyproject.toml and {len(node_dirs)} package.json files.")
+print()
+print("# --- PYTHONPATH (Python module roots; src-layout aware) ---")
+if pythonpath_entries:
+    joined = ":".join(pythonpath_entries)
+    print(f'export PYTHONPATH="{joined}${{PYTHONPATH:+:$PYTHONPATH}}"')
+else:
+    print('export PYTHONPATH="${PYTHONPATH:-}"  # (no python modules discovered)')
+print()
+print("# --- NODEJSPATH (Node package bin dirs) ---")
+if path_entries:
+    joined = ":".join(path_entries)
+    print(f'export NODEJSPATH="{joined}"')
+else:
+    print('export NODEJSPATH=""  # (no node packages discovered)')
+print()
+print("# --- PATH (composed from PYTHONPATH + NODEJSPATH; no duplication) ---")
+print('export PATH="${PYTHONPATH}:${NODEJSPATH}:${PATH}"')
+PY
+
+if [[ $CHECK_MODE -eq 1 ]]; then
+  if [[ ! -f "$OUT" ]]; then
+    echo "FAIL: $OUT does not exist; run scripts/workspace/generate-docker-path.sh to create it" >&2
+    exit 1
+  fi
+  if ! diff -q "$OUT" "$TMP" >/dev/null 2>&1; then
+    echo "FAIL: $OUT is stale; run scripts/workspace/generate-docker-path.sh to refresh" >&2
+    diff -u "$OUT" "$TMP" >&2 || true
+    exit 1
+  fi
+  echo "OK: $OUT is up to date"
+else
+  mkdir -p "$(dirname "$OUT")"
+  mv "$TMP" "$OUT"
+  echo "wrote: $OUT"
+fi

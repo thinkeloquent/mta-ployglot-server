@@ -1,0 +1,86 @@
+# Makefile.lang.python — Python toolchain wrappers (poetry).
+#
+# Iterates `$(PY_PKGS)` from Makefile.entries. Without poetry on PATH every
+# target degrades to a `skip:` log line rather than failing the build.
+#
+# `py.preinstall` is a customizable hook that runs before every install
+# target — drop `poetry config …` commands in there to wire up registry
+# auth, in-project venvs, etc. Default body is a no-op.
+#
+# Each recipe is a single shell invocation (multi-line via `\`) so that an
+# early-return `exit 0` from a guard actually returns from the recipe.
+
+POETRY ?= $(shell command -v poetry 2>/dev/null)
+PYTEST ?= $(PYTHON) -m pytest
+
+.PHONY: py.preinstall py.install py.ci-install py.lint py.test py.build py.clean py.ci
+
+py.preinstall: ## (python) pre-install hook — pins virtualenvs.in-project so DEV_VENV lands at $(SERVER_FASTAPI)/.venv
+	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi
+	@# In-project venv keeps poetry, dev-install-fastapi, and the smoke targets
+	@# pointing at the same $(SERVER_FASTAPI)/.venv (= $(DEV_VENV)). Without this
+	@# pin poetry would create a venv under ~/Library/Caches and DEV_VENV would
+	@# not exist on disk, breaking dev-fastapi / py.dev / scripts/smoke/*.
+	$(POETRY) config virtualenvs.in-project true --local -C $(SERVER_FASTAPI)
+	@# Add registry / TLS-cert config below if your network needs it. Cert env
+	@# vars (PIP_CERT, SSL_CERT_FILE, REQUESTS_CA_BUNDLE) flow in via .env →
+	@# Makefile.vars exports → poetry → pip. Examples:
+	@#   $(POETRY) config repositories.private $(PYTHON_REGISTRY_URL)
+	@#   $(POETRY) config http-basic.private $$PYPI_USER $$PYPI_PASS
+
+py.install: py.preinstall ## (python) lock + install server/fastapi via poetry (--no-root)
+	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi
+	@test -f $(SERVER_FASTAPI)/pyproject.toml || { \
+	  echo "FAIL: $(SERVER_FASTAPI)/pyproject.toml not found"; exit 1; }
+	$(POETRY) lock -C $(SERVER_FASTAPI)
+	$(POETRY) install -C $(SERVER_FASTAPI) --no-root -vv
+
+py.ci-install: py.preinstall ## (python) deterministic CI install for server/fastapi (--no-interaction --sync)
+	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi
+	@test -f $(SERVER_FASTAPI)/pyproject.toml || { \
+	  echo "FAIL: $(SERVER_FASTAPI)/pyproject.toml not found"; exit 1; }
+	$(POETRY) lock -C $(SERVER_FASTAPI)
+	$(POETRY) install -C $(SERVER_FASTAPI) --no-root --no-interaction --sync
+
+py.lint: ## (python) ruff (preferred) or flake8 — graceful when neither is installed
+	@for p in $(PY_PKGS); do \
+	  (cd $(ROOT_DIR)/$$p && \
+	    (command -v ruff   >/dev/null && ruff   check . ) || \
+	    (command -v flake8 >/dev/null && flake8 .         ) || true); \
+	done
+
+py.test: ## (python) pytest per sibling (graceful skip when no tests/ exists)
+	@for p in $(PY_PKGS); do \
+	  if [ -d $(ROOT_DIR)/$$p/tests ] || [ -d $(ROOT_DIR)/$$p/test ]; then \
+	    (cd $(ROOT_DIR)/$$p && $(PYTEST)); \
+	  fi; \
+	done
+
+py.build: ## (python) build wheel + sdist (poetry build) — discovers inner ployglot pkg dirs (packages/*-py, packages/py, *_server)
+	@if [ -z "$(POETRY)" ]; then echo "skip: no poetry on PATH"; exit 0; fi; \
+	for p in $(PY_PKGS); do \
+	  found=0; \
+	  for pp in $$(find -L "$(ROOT_DIR)/$$p" -mindepth 1 -maxdepth 3 -name pyproject.toml \
+	      -not -path '*/node_modules/*' \
+	      -not -path '*/.venv/*' \
+	      -not -path '*/dist/*' \
+	      -not -path '*/build/*' \
+	      2>/dev/null | sort); do \
+	    if grep -qE '^[[:space:]]*package[[:space:]]*=[[:space:]]*false' "$$pp"; then continue; fi; \
+	    if ! grep -qE '^[[:space:]]*name[[:space:]]*=' "$$pp"; then continue; fi; \
+	    dir=$$(dirname "$$pp"); \
+	    rel=$${dir#$(ROOT_DIR)/}; \
+	    echo "build: $$rel"; \
+	    (cd "$$dir" && $(POETRY) build) || exit $$?; \
+	    found=1; \
+	  done; \
+	  if [ "$$found" = "0" ]; then echo "skip: $$p (no buildable python package found)"; fi; \
+	done
+
+py.clean: ## (python) remove venvs, build artifacts, caches
+	@for p in $(PY_PKGS); do \
+	  rm -rf $(ROOT_DIR)/$$p/.venv $(ROOT_DIR)/$$p/dist $(ROOT_DIR)/$$p/build $(ROOT_DIR)/$$p/.pytest_cache; \
+	  find $(ROOT_DIR)/$$p -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true; \
+	done
+
+py.ci: py.ci-install py.lint py.test py.build ## (python) full pipeline

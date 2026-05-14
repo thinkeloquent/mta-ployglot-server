@@ -1,0 +1,33 @@
+# Makefile.git — single-repo git operations.
+#
+# Distinct from Makefile.orchestrator, which fans operations across every
+# sibling registered in workspace.toml. Targets here only touch the current
+# repo's git state.
+#
+# Override remote / branch per-invocation:
+#   make git-pull GIT_PULL_REMOTE=upstream GIT_PULL_BRANCH=release/v2
+
+GIT_PULL_REMOTE ?= origin
+GIT_PULL_BRANCH ?= release/main
+
+.PHONY: git-pull
+git-pull: ## DESTRUCTIVE: hard-reset to $(GIT_PULL_REMOTE)/$(GIT_PULL_BRANCH); discards ALL local changes (committed + uncommitted + untracked)
+	@# This target is intentionally UNCONDITIONAL. It discards every form
+	@# of local change so the working tree matches the remote ref exactly:
+	@#
+	@#   git clean -fd    → removes untracked files and dirs
+	@#   git fetch        → updates the remote ref
+	@#   git reset --hard → wipes local commits AND uncommitted edits;
+	@#                      moves HEAD to remote ref's commit
+	@#
+	@# After this runs, `git status` on the relevant branch reports clean
+	@# and `git log` shows the remote's history with no local divergence.
+	@# Ignored files (node_modules, .dev/, .env, .venv) are NOT touched —
+	@# use `make clean-deps` for that.
+	@echo "==> git-pull: discarding local state and resetting to $(GIT_PULL_REMOTE)/$(GIT_PULL_BRANCH)"
+	@before=$$(git -C $(ROOT_DIR) rev-parse --short HEAD 2>/dev/null || echo "?"); \
+	  echo "    before: $$before  ($$(git -C $(ROOT_DIR) rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?'))"
+	git -C $(ROOT_DIR) clean -fd
+	git -C $(ROOT_DIR) fetch $(GIT_PULL_REMOTE)
+	git -C $(ROOT_DIR) reset --hard $(GIT_PULL_REMOTE)/$(GIT_PULL_BRANCH)
+	@echo "==> reset to $(GIT_PULL_REMOTE)/$(GIT_PULL_BRANCH) @ $$(git -C $(ROOT_DIR) rev-parse --short HEAD)"

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Opt-in git pre-push hook. Enable for this clone with:
+#   git config core.hooksPath scripts/git-hooks
+#
+# Runs every Checklist gate; aborts the push on first failure.
+# Override with: KEEP_GOING=1 git push   (runs all, exits with failure count)
+
+exec make pre-push
