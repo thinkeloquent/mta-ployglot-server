@@ -121,14 +121,13 @@ RUN pnpm install --recursive
 
 # 2) Build the 3 TypeScript siblings so dist/ exists before fastify's runtime
 #    needs to import them. The .mjs siblings need no build step.
-RUN pnpm --filter @ployglot/fastify-server      run build \
- && pnpm --filter @org/env-resolve              run build \
- && pnpm --filter @polyglot/fetch-http-client   run build
+RUN pnpm -r --if-present run build
 
 # 3) Drop devDependencies. pnpm doesn't support `--recursive` on `prune`, so
 #    re-install with `--prod` filtered to fastify + its workspace dependency
 #    closure. This keeps only the runtime-needed packages in each tree.
-RUN pnpm install --prod --filter 'mta-fastify-server...'
+# RUN pnpm install --prod --filter 'mta-fastify-server...'
+RUN pnpm -r --if-present run install
 
 # Runtime-only env. Set AFTER the install/build/prune steps so NODE_ENV=production
 # doesn't suppress devDependencies during step 1's `pnpm install --recursive`.
