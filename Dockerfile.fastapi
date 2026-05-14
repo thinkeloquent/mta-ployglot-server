@@ -93,14 +93,18 @@ COPY .bin/docker/pyproject.docker.toml ./pyproject.toml
 # anyway); `--only main` drops the dev group (watchfiles).
 RUN poetry install --no-interaction --no-ansi --no-root --only main
 
-# Smoke-check that every editable sibling is installed (one entry per
-# sibling in `pip list --editable`). Counts the 9 expected packages so a
-# silent drop fails the build.
-RUN .venv/bin/pip list --editable 2>/dev/null \
- | tail -n +3 \
- | tee /dev/stderr \
- | (count=$(wc -l) ; [ "$count" -eq 9 ] || { echo "FAIL: expected 9 editable siblings, got $count"; exit 1; }) \
- && echo "OK: 9 editable siblings installed"
+# Smoke-check that every editable sibling is installed. Uses the
+# generated validator at .bin/docker/validate-python.sh, whose package
+# list is derived from .bin/docker/pyproject.docker.toml (the same
+# manifest poetry installs from above), so it can never drift from the
+# dep set. Replaces the previous `pip list --editable | wc -l` count
+# check, which couldn't name a missing sibling — the validator runs
+# `pip show name1 name2 ...` and emits per-name `MISSING: <pkg>` lines
+# when count disagrees. Regenerate via
+# `./scripts/workspace/generate-package-validate.sh`; the release
+# workflow regenerates and commits on diff.
+COPY .bin/docker/validate-python.sh ./validate-python.sh
+RUN bash ./validate-python.sh
 
 # Single-stage builds don't get the implicit fresh-image isolation that
 # the previous multi-stage runtime layer gave us. Hand the application

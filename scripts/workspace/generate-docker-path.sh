@@ -3,9 +3,15 @@
 # for every Python and Node module discovered under ployglots/.
 #
 # The output file is meant to be sourced inside the Docker image
-# (Dockerfile.fastapi / Dockerfile.fastify). It augments PYTHONPATH with
-# each Python package root (preferring `<pkg>/src` when present, else the
-# pyproject directory itself) and PATH with each `<pkg>/node_modules/.bin`.
+# (Dockerfile.fastapi / Dockerfile.fastify). It exports two location lists,
+# each containing every entry only once, then composes PATH from them:
+#
+#   PYTHONPATH  — every Python module root (prefers `<pkg>/src` when
+#                 present, else the pyproject directory itself)
+#   NODEJSPATH  — every `<pkg>/node_modules/.bin` directory
+#   PATH        — "${PYTHONPATH}:${NODEJSPATH}:${PATH}" (no duplication;
+#                 if you change the two lists above, PATH picks it up)
+#
 # Every entry is prefixed with /application/ (the image WORKDIR);
 # override via $APP_ROOT.
 #
@@ -147,14 +153,17 @@ if pythonpath_entries:
     joined = ":".join(pythonpath_entries)
     print(f'export PYTHONPATH="{joined}${{PYTHONPATH:+:$PYTHONPATH}}"')
 else:
-    print("# (no python modules discovered)")
+    print('export PYTHONPATH="${PYTHONPATH:-}"  # (no python modules discovered)')
 print()
-print("# --- PATH (Node package bin dirs) ---")
+print("# --- NODEJSPATH (Node package bin dirs) ---")
 if path_entries:
     joined = ":".join(path_entries)
-    print(f'export PATH="{joined}:${{PATH}}"')
+    print(f'export NODEJSPATH="{joined}"')
 else:
-    print("# (no node packages discovered)")
+    print('export NODEJSPATH=""  # (no node packages discovered)')
+print()
+print("# --- PATH (composed from PYTHONPATH + NODEJSPATH; no duplication) ---")
+print('export PATH="${PYTHONPATH}:${NODEJSPATH}:${PATH}"')
 PY
 
 if [[ $CHECK_MODE -eq 1 ]]; then

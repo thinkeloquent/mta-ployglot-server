@@ -223,6 +223,23 @@ jobs:
             git commit -m "chore(release): regenerate .bin/docker/path.sh from ployglots/ module layout"
           fi
 
+      - name: Regenerate .bin/docker/validate-{python,node}.sh
+        # Emits the per-runtime sibling validators that each Dockerfile
+        # COPY+RUNs. The Python list is derived from .bin/docker/
+        # pyproject.docker.toml's path-deps; the Node list from
+        # .bin/docker/pnpm-workspace.yaml's `ployglots/...` members (their
+        # package.json `name` fields). Replaces the count-based
+        # `pip list --editable | wc -l` check in Dockerfile.fastapi with
+        # a per-name `pip show` that reports exactly which sibling went
+        # missing. Idempotent; commit-on-diff mirrors the path.sh step.
+        run: |
+          set -euo pipefail
+          ./scripts/workspace/generate-package-validate.sh
+          if ! git diff --quiet -- .bin/docker/validate-python.sh .bin/docker/validate-node.sh; then
+            git add .bin/docker/validate-python.sh .bin/docker/validate-node.sh
+            git commit -m "chore(release): regenerate .bin/docker/validate-{python,node}.sh"
+          fi
+
       - name: Prepend // @ts-nocheck to every TypeScript source file
         # Bulk-disable strict TypeScript checking across the assembled release
         # tree before orphan-collapse. The Dockerfile.fastify build runs
