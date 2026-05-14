@@ -204,6 +204,16 @@ docker-verify-install: ## Verify the docker CLI is installed and the daemon is r
 # rsync -aL the tree into .docker-stage/ so the build sees real dirs.
 # On release/* branches (real subtree dirs) the recipe is a no-op.
 #
+# What gets staged:
+#   - ployglots/  (rsync -aL: deref symlinks into real dirs)
+#   - server/     (rsync -a:  per-runtime source + per-server manifests)
+#   - .bin/docker/ (rsync -a: docker-only manifests COPY'd by both
+#                  Dockerfiles — package.json, pnpm-workspace.yaml,
+#                  .npmrc, pyproject.docker.toml. Excludes regenerate.py's
+#                  __pycache__ if present.)
+#   - Dockerfile.fastify + Dockerfile.fastapi
+#   - .dockerignore (root copy, if present)
+#
 # Excludes mirror .dockerignore so we don't drag host build artifacts in.
 
 .PHONY: docker-stage
@@ -223,6 +233,9 @@ ifeq ($(DOCKER_PLOYGLOTS_ARE_SYMLINKS),1)
 	  --exclude='node_modules' --exclude='.venv' --exclude='__pycache__' \
 	  --exclude='*.egg-info'    --exclude='.pytest_cache' \
 	  $(ROOT_DIR)/server/ $(DOCKER_STAGE_DIR)/server/ ; \
+	rsync -a --delete \
+	  --exclude='__pycache__' --exclude='*.pyc' \
+	  $(ROOT_DIR)/.bin/docker/ $(DOCKER_STAGE_DIR)/.bin/docker/ ; \
 	cp $(ROOT_DIR)/Dockerfile.fastify $(ROOT_DIR)/Dockerfile.fastapi $(DOCKER_STAGE_DIR)/ ; \
 	if [ -f $(ROOT_DIR)/.dockerignore ]; then cp $(ROOT_DIR)/.dockerignore $(DOCKER_STAGE_DIR)/ ; fi; \
 	echo "==> staged: $$(du -sh $(DOCKER_STAGE_DIR) | cut -f1) at $(DOCKER_STAGE_DIR)"

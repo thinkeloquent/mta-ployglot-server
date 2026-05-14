@@ -73,10 +73,13 @@ ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY} \
     BUILD_VERSION=${BUILD_VERSION} \
     GIT_COMMIT=${GIT_COMMIT} \
     VAULT_SECRET_FILE=${VAULT_SECRET_FILE} \
-    NODE_ENV=production \
-    PORT=3000 \
-    NODE_OPTIONS=--disable-proto=delete \
     POLYGLOT_DEBUG=1
+
+# NODE_ENV is deliberately NOT set here. pnpm honors NODE_ENV=production by
+# omitting devDependencies on `pnpm install`, which would skip typescript /
+# tsx / tsup in the three TS siblings and break step 2's `tsc -p .` with
+# `sh: tsc: not found`. NODE_ENV=production is set further down, after the
+# `--prod` re-install in step 3 has already pruned devDeps.
 
 # Install pnpm globally. (Using `npm install -g` rather than corepack to keep
 # the registry pinning consistent — corepack pulls from registry.npmjs.org by
@@ -126,6 +129,12 @@ RUN pnpm --filter @ployglot/fastify-server      run build \
 #    re-install with `--prod` filtered to fastify + its workspace dependency
 #    closure. This keeps only the runtime-needed packages in each tree.
 RUN pnpm install --prod --filter 'mta-fastify-server...'
+
+# Runtime-only env. Set AFTER the install/build/prune steps so NODE_ENV=production
+# doesn't suppress devDependencies during step 1's `pnpm install --recursive`.
+ENV NODE_ENV=production \
+    PORT=3000 \
+    NODE_OPTIONS=--disable-proto=delete
 
 # Single-stage builds don't get the implicit fresh-image isolation that the
 # previous multi-stage runtime layer gave us. Hand the application tree to
